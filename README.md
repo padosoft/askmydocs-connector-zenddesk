@@ -51,7 +51,7 @@ It follows the same contract as the sibling connectors (`askmydocs-connector-fre
 ## Features
 
 - 🔌 **Zero-config discovery** — Laravel auto-discovery registers the service provider; the connector is registered under the key `zendesk` and also added to `connectors.built_in`, so it works with a Composer `path` repository during development.
-- 🔐 **Two authentication modes** — API token (`{agent email}/token` + token, HTTP Basic) or an OAuth access token (Bearer). Secrets live only in the encrypted credential vault, never in `config_json`.
+- 🔐 **Two authentication modes** — API token (`{admin email}/token` + token, HTTP Basic) or an OAuth access token (Bearer). Secrets live only in the encrypted credential vault, never in `config_json`.
 - 🎫 **Tickets with their conversation** — subject, status, priority, type, requester, assignee, organization, channel, tags and every comment, with author names resolved.
 - 🔒 **Internal notes are a switch** — private agent comments are included by default and can be excluded; changing the setting re-imports already imported tickets.
 - 📎 **Attachments as documents** — PDF, DOCX, TXT and Markdown (images too when the host enables OCR). Size, count, malware-scan result, real MIME and DOCX structure are checked; credentials are sent only to the account host.
@@ -143,11 +143,11 @@ Full walkthrough with troubleshooting: [docs/credential-setup.md](docs/credentia
 1. In Zendesk open **Admin Center → Apps and integrations → APIs → Zendesk API**.
 2. On the **Settings** tab make sure **Token access** is enabled.
 3. Click **Add API token**, give it a description such as `AskMyDocs`, copy the token **once** (Zendesk will not show it again) and save.
-4. Decide which agent the token acts as. **An API token impersonates the agent whose email you pair it with**, so use a dedicated agent (for example `askmydocs@your-company.com`) with the narrowest role that can read what you want indexed — tickets, users, organizations and Help Center articles. A read-only custom role is ideal.
+4. Decide which agent the token acts as. **An API token impersonates the agent whose email you pair it with**, so use a dedicated agent (for example `askmydocs@your-company.com`) that holds the **Administrator** role: the incremental export endpoints the import relies on are admin-only, and the connector refuses non-admin credentials when you save the form. Keep the account dedicated and its token secret — the connector itself only ever issues `GET` requests.
 5. In AskMyDocs choose **Connectors → Zendesk → Install** and enter:
    - **Zendesk subdomain** — `company` for `company.zendesk.com` (the full host or `https://company.zendesk.com` is accepted too);
    - **Authentication** — *API token*;
-   - **Agent email** — the dedicated agent's email;
+   - **Admin email** — the dedicated administrator's email;
    - **API token** — the token from step 3.
 
 Zendesk's credential format is `{email_address}/token:{api_token}` over HTTP Basic; the package builds it for you.
@@ -327,7 +327,7 @@ The suite covers credential verification and state tokens, both auth modes, full
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Install says *Zendesk did not recognise the credentials* | `users/me` returned an anonymous identity: wrong token, wrong subdomain, or token access disabled | Re-check the token, the agent email and **Token access** in Admin Center |
+| Install says *Zendesk did not recognise the credentials* | `users/me` returned an anonymous identity: wrong token, wrong subdomain, or token access disabled | Re-check the token, the admin email and **Token access** in Admin Center |
 | *Use an admin account* | The email belongs to an agent or end user | Pair the token with an admin email |
 | `Zendesk rejected the credentials` (401) in health | Token deleted/rotated, or OAuth token expired | Create a new token and re-enter credentials |
 | `The Zendesk account does not permit this operation` (403) | The agent's role cannot read that resource (for example users or Help Center) | Grant the role access, or switch the content type off |

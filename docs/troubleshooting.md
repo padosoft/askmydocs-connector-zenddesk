@@ -17,7 +17,7 @@ or directly: `SELECT id, mode, status, error, checkpoint FROM zendesk_sync_runs 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | *Enter the account subdomain…* | The value is not a single label (`a.b`, a path, a custom domain) | Use `company` / `company.zendesk.com` |
-| *Zendesk did not recognise the credentials* | Wrong token or email, **Token access** off, wrong subdomain | Re-create the token; check the agent email |
+| *Zendesk did not recognise the credentials* | Wrong token or email, **Token access** off, wrong subdomain | Re-create the token; check the admin email |
 | *Use an admin account…* | Token paired with a non-admin email (incremental exports are admin-only) | Use an admin |
 | Health shows `Zendesk rejected the credentials` | Token deleted, rotated, or OAuth token expired | Re-enter credentials |
 | `permission_denied` for users or articles | The agent's role cannot view them | Adjust the role, or disable that content type |

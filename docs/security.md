@@ -15,7 +15,7 @@ The connector reads data written by **customers** (ticket text, attachment conte
 | State token is single-use, tenant- and installation-bound | `BaseConnector::issueOAuthState` / `consumeOAuthState` |
 | Sent only to `https://{subdomain}.zendesk.com`; on attachment downloads only when the URL host equals that host | `ZendeskClient::download` |
 | Upstream error bodies are never echoed; only status, `Retry-After` and allow-listed field names survive | `ZendeskApiException`, `ZendeskClient::validationFields` |
-| Use a dedicated least-privilege agent | [credential-setup](credential-setup.md) |
+| Use a dedicated admin account (exports are admin-only); the connector is read-only by construction | [credential-setup](credential-setup.md) |
 
 ## Outbound requests (SSRF)
 

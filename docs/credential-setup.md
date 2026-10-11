@@ -1,16 +1,16 @@
 # Credential setup
 
-Two ways to authenticate; both end up as one encrypted secret in the `connector-base` vault. Everything else (subdomain, mode, agent email) is non-secret and lives in the installation's `config_json.connection`.
+Two ways to authenticate; both end up as one encrypted secret in the `connector-base` vault. Everything else (subdomain, mode, admin email) is non-secret and lives in the installation's `config_json.connection`.
 
 ## 1. Pick the identity the connector runs as
 
-Whatever you choose, the connector can read **exactly what that identity can read**. Create a dedicated agent such as `askmydocs@your-company.com` instead of using a personal account:
+Whatever you choose, the connector can read **exactly what that identity can read**. Create a dedicated **administrator** such as `askmydocs@your-company.com` instead of using a personal account (Zendesk restricts the incremental export APIs the import uses to admins, so the form rejects non-admin credentials):
 
 - it makes the audit trail honest (`askmydocs` appears in Zendesk's logs, not a colleague);
-- you can restrict it with a **custom role** (Enterprise plans) or a light-agent seat, and remove it without breaking anyone's login;
+- you can remove it without breaking anyone's login;
 - departures of a person do not silently break the integration.
 
-The role needs to **view**: tickets (including private comments if you keep internal notes enabled), end users, organizations and — if you import them — Help Center articles including their user segments. It never needs to edit anything.
+The connector only issues `GET` requests and never edits anything; the admin role is required for the export endpoints, and lets it view tickets (including private comments if you keep internal notes enabled), end users, organizations and Help Center articles with their user segments.
 
 ## 2a. API token
 
