@@ -263,7 +263,17 @@ final class SyncManager
             'organization' => (bool) data_get($installation->config_json, 'organizations.enabled', true),
             default => true,
         };
-        $state = $enabled ? $this->states($installation)->where('kind', $kind)->where('id', '>', (int) ($cp['refresh_cursor'] ?? 0))->orderBy('id')->first() : null;
+        $state = $this->states($installation)->where('kind', $kind)->where('id', '>', (int) ($cp['refresh_cursor'] ?? 0))->orderBy('id')->first();
+        if ($state !== null && ! $enabled) {
+            // A switched-off type is never re-imported, but a copy still indexed under a PREVIOUS project (the
+            // installation was rebound) would stay readable there indefinitely: retire exactly those.
+            if (! str_starts_with((string) $state->relative_path, self::project($installation).'/')) {
+                $this->importer->delete($installation, $run, $kind, $state->remote_id);
+            }
+            $cp['refresh_cursor'] = $state->id;
+
+            return $cp;
+        }
         if ($state === null) {
             $next = ['ticket' => 'user', 'user' => 'organization'][$kind] ?? null;
             if ($next === null) {
@@ -568,7 +578,7 @@ final class SyncManager
         }
         foreach ($states as $state) {
             $row = $present[(int) $state->remote_id] ?? null;
-            if ($row === null || ($kind === 'user' && ($row['role'] ?? '') !== 'end-user')) {
+            if ($row === null || ($kind === 'user' && (($row['role'] ?? '') !== 'end-user' || ($row['active'] ?? true) === false))) {
                 $this->importer->delete($installation, $run, $kind, $state->remote_id);
             } elseif ($kind === 'user') {
                 $this->importer->user($installation, $run, $row, $this->organizationName($client, $row['organization_id'] ?? null));
@@ -657,6 +667,14 @@ final class SyncManager
     }
 
     /** Hash of everything that changes what an already-imported object would contain or where it lives. */
+    /** The KB project documents of this installation are delivered to. */
+    public static function project(ConnectorInstallation $installation): string
+    {
+        $project = $installation->project_key ?: data_get($installation->config_json, 'project_key', config('kb.ingest.default_project', 'default'));
+
+        return is_string($project) && $project !== '' ? $project : 'default';
+    }
+
     public static function projection(ConnectorInstallation $installation): string
     {
         $project = $installation->project_key ?: data_get($installation->config_json, 'project_key', config('kb.ingest.default_project', 'default'));

@@ -4,7 +4,8 @@ Eleven read-only tools per active installation, named `zendesk_{installationId}_
 
 ## Availability rules
 
-- `chat_tools.enabled` must be true.
+- `chat_tools.enabled` must be true (global kill switch).
+- The installation must have **opted in** with the setting *Expose live Zendesk tools to the chat* (`config_json.live_tools.enabled === true`, default off). Live calls run with the installation's admin credential, **not** the asking user's Zendesk permissions, so group-, brand- or assignment-restricted agents would reach tickets and internal notes Zendesk itself would deny them; enable it only when everyone with access to the bound project may read the whole account.
 - The installation must belong to the **current tenant**, have status `active`, and be bound (project column, legacy `config_json.project_key`, or the host default) to the **project passed in**. A `null` or empty project returns an empty catalog.
 - `execute()` re-resolves the tool from the catalog on every call and throws `RuntimeException` if it is gone.
 - `$beforeRequest` is invoked before every physical request so a host can enforce a request budget; it may throw to interrupt.
@@ -73,6 +74,7 @@ Every tool schema is `additionalProperties: false`. Before any HTTP call the exe
 - **`url`** is always built from the account host, except for an article's `html_url`, which is used only when its host is the account's own.
 - **`meta.users`** maps ids to display names when Zendesk side-loaded them (never emails).
 - **`coverage.email_hash` / `meta.term_hash`** are SHA-256 hashes so a client can correlate requests without storing the address or name.
+- **Side-loaded names.** `meta.users` (id → name) is added only while the whole result still fits `chat_tools.max_result_bytes`; otherwise it is dropped and `meta.users_omitted` is `true`.
 - **Truncation.** Bodies are cut at 16 000 characters (`body_truncated: true` on the record). Records are added one at a time while the JSON stays under `chat_tools.max_result_bytes`; if the cap stops the list, `truncated` is true and `coverage.complete` false.
 
 ## Errors

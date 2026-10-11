@@ -5,13 +5,22 @@ namespace Padosoft\AskMyDocsConnectorZendesk\Tests\Feature;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Http;
+use Padosoft\AskMyDocsConnectorBase\Models\ConnectorInstallation;
 use Padosoft\AskMyDocsConnectorZendesk\Tests\TestCase;
 use Padosoft\AskMyDocsConnectorZendesk\Tools\ZendeskArguments;
 use Padosoft\AskMyDocsConnectorZendesk\Tools\ZendeskTools;
 
 final class ToolsTest extends TestCase
 {
-    use FakesZendesk;
+    use FakesZendesk {
+        authorized as private baseAuthorized;
+    }
+
+    /** Live tools are opt-in per installation; every test but the default-state one wants them on. */
+    private function authorized(array $config = []): ConnectorInstallation
+    {
+        return $this->baseAuthorized(array_replace_recursive(['live_tools' => ['enabled' => true]], $config));
+    }
 
     private function run_(string $action, array $arguments, ?Model $installation = null, array $config = []): array
     {
@@ -303,5 +312,29 @@ final class ToolsTest extends TestCase
         $this->assertTrue(ZendeskArguments::validCursor('eyJvIjoiaWQiLCJ2IjoiYVFFPSJ9'));
         $this->assertFalse(ZendeskArguments::validCursor('a b'));
         $this->assertFalse(ZendeskArguments::validTerm("a\x00b"));
+    }
+
+    public function test_live_tools_are_off_until_the_installation_opts_in(): void
+    {
+        $installation = $this->baseAuthorized();
+        $tools = app(ZendeskTools::class);
+        $this->assertSame([], $tools->catalog('support'));
+        $this->expectException(\RuntimeException::class);
+        $tools->execute('zendesk_'.$installation->id.'_get_ticket', ['id' => 1], 'support');
+    }
+
+    public function test_the_user_name_map_never_pushes_a_result_past_the_size_cap(): void
+    {
+        $users = array_map(fn ($i) => ['id' => $i, 'name' => 'Person number '.$i.str_repeat('x', 30)], range(1, 200));
+        $this->fake(['*' => ['ticket' => ['id' => 1, 'subject' => 's', 'description' => 'short'], 'users' => $users]]);
+        $roomy = $this->run_('get_ticket', ['id' => 1]);
+        $this->assertCount(200, $roomy['data']['meta']['users']);
+
+        config(['connector-zendesk.chat_tools.max_result_bytes' => 4000]);
+        $capped = $this->run_('get_ticket', ['id' => 1]);
+        $this->assertCount(1, $capped['data']['records']);
+        $this->assertArrayNotHasKey('users', $capped['data']['meta']);
+        $this->assertTrue($capped['data']['meta']['users_omitted']);
+        $this->assertLessThanOrEqual(4000, strlen(json_encode($capped['data'])));
     }
 }

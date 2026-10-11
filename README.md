@@ -59,7 +59,7 @@ It follows the same contract as the sibling connectors (`askmydocs-connector-fre
 - 📚 **Help Center articles** — published articles only; drafts are never imported and a draft removes the existing document. Optional locale filter.
 - ♻️ **Resumable, idempotent scans** — durable checkpoints, per-installation lock, content fingerprints, `Retry-After` honoured, deletions only on confirmed evidence.
 - 🧭 **Cursor-based incremental exports** — tickets and users use Zendesk's cursor-based incremental exports, the documented way to walk large accounts without skipping records.
-- 🛠️ **Eleven read-only live tools** — per installation, project-scoped, size-capped, with explicit coverage and pagination metadata.
+- 🛠️ **Eleven read-only live tools** — opt-in per installation, project-scoped, size-capped, with explicit coverage and pagination metadata.
 - 🧠 **Agent usage profile** — `resources/agent-usage.json` tells the orchestrator when to go live, when to use the index and when to combine both.
 - 🏷️ **Provenance and ACL reporting** — implements `DeclaresProvenance` (tickets are customer-authored, so the default is `untrusted-external`) and `SupportsSourceAcl` (agents-only records, public or segment-restricted articles).
 - 🏢 **Multi-account, multi-tenant** — several Zendesk accounts per tenant, each bound to its own KB project; every query is tenant-scoped.
@@ -215,7 +215,7 @@ Details and failure semantics: [docs/sync-semantics.md](docs/sync-semantics.md).
 
 ## Live tools for the chat
 
-`Tools\ZendeskTools` exposes a catalog and an executor, independent of the importer. For every **active** installation bound to the requested project there are **eleven read-only tools**, named `zendesk_{installationId}_{action}` (for example `zendesk_42_get_ticket`):
+`Tools\ZendeskTools` exposes a catalog and an executor, independent of the importer. For every **active** installation bound to the requested project that an operator has **explicitly enabled** (installation setting *Expose live Zendesk tools to the chat*, `live_tools.enabled`, off by default) there are **eleven read-only tools**, named `zendesk_{installationId}_{action}` (for example `zendesk_42_get_ticket`):
 
 | Action | Arguments | Purpose |
 |---|---|---|
@@ -240,6 +240,8 @@ $catalog = $tools->catalog('support');                       // project key is m
 $result  = $tools->execute('zendesk_42_get_ticket', ['id' => 4821], 'support');
 // → ['data' => …] or ['error' => …, 'error_code' => …], plus physical_request_count and provenance
 ```
+
+> **Trust model.** Live calls run with the installation's admin credential, not with the Zendesk permissions of the user asking. An agent restricted to assigned tickets, groups or brands in Zendesk could therefore read, through the chat, tickets and internal notes Zendesk would deny them. That is why the setting is off by default: enable it only when everyone with access to the bound KB project may read the whole account. Indexed documents carry an *unknown* ACL for the same reason.
 
 Guarantees:
 
@@ -299,7 +301,7 @@ Full threat notes: [docs/security.md](docs/security.md).
 | `attachments.allow_unscanned` | `false` | `CONNECTOR_ZENDESK_ALLOW_UNSCANNED`: also import files whose malware scan is `not_scanned`, `failed_to_scan` or missing. Off by default: only `malware_not_found` is imported |
 | `sync.queue` / `sync.connection` | `zendesk` / *(default)* | `CONNECTOR_ZENDESK_QUEUE`, `CONNECTOR_ZENDESK_CONNECTION` |
 | `sync.middleware` | `[]` | Job middleware for `ProcessSyncBatch` and `StartSync` |
-| `chat_tools.enabled` | `true` | Disable to remove every live tool |
+| `chat_tools.enabled` | `true` | Global kill switch: `false` removes every live tool. Tools also need the per-installation `live_tools.enabled` setting (off by default) |
 | `chat_tools.max_result_bytes` | `65536` | Cap on one tool result |
 
 ## Queues and operations

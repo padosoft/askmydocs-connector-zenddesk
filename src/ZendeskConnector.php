@@ -73,6 +73,8 @@ final class ZendeskConnector extends BaseConnector implements DeclaresProvenance
             (new CredentialField('attachments.enabled', 'Import attachments', 'checkbox', 'config', default: true, group: 'Attachments'))->toArray(),
             (new CredentialField('attachments.max_size_mb', 'Maximum file size (MiB)', 'number', 'config', default: 25, group: 'Attachments'))->toArray(),
             (new CredentialField('attachments.max_per_ticket', 'Maximum files per ticket', 'number', 'config', default: 20, group: 'Attachments'))->toArray(),
+            (new CredentialField('live_tools.enabled', 'Expose live Zendesk tools to the chat', 'checkbox', 'config', default: false,
+                help: 'Lets every user of the bound KB project query this Zendesk account live. Calls run with the admin credential above, NOT with the asking user\'s Zendesk permissions, so group-, brand- or assignment-restricted agents would see tickets (including internal notes) Zendesk would deny them. Enable only when everyone with access to this project may read the whole account.', group: 'Trust'))->toArray(),
             (new CredentialField('provenance_tier', 'Authorship of imported content', 'select', 'config', default: ProvenanceTier::UntrustedExternal->value,
                 options: [ProvenanceTier::UntrustedExternal->value => 'Untrusted external (customers write into tickets)', ProvenanceTier::TrustedInternal->value => 'Trusted internal (staff-authored only, e.g. Help Center)'],
                 help: 'Recorded on every document of this installation. Tickets carry text written by customers; keep the default unless this installation imports staff-authored content only.', group: 'Trust'))->toArray(),

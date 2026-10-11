@@ -43,6 +43,7 @@ Attachments are customer-supplied files, the highest-risk input the package touc
 
 - Every `text/markdown` and `text/plain` body **and its title** (ticket subject, customer or organization name, article title, text-attachment file name; the file name is never copied into metadata) is passed through `ConnectorIngestionContract::redactContent()` before it is written or dispatched.
 - Emails and names are kept out of document metadata and out of the reported ACL.
+- Live tools are **opt-in per installation** (`live_tools.enabled`, default off) because they run with the installation's admin credential rather than the asking user's Zendesk permissions.
 - Live tool results contain what the Zendesk record contains and are **not** redacted by this package; apply your host's output policy. Lookup hashes (`term_hash`, `email_hash`) are used instead of echoing search terms.
 - Internal notes can be excluded (`include_internal_notes`). Turning it off triggers a re-import so previously indexed private text is replaced.
 

@@ -49,6 +49,11 @@ final readonly class ZendeskTools
             if (! $this->matchesProject($installation, $projectKey)) {
                 continue;
             }
+            // Live calls run with the installation's admin credential, not the asking user's Zendesk permissions
+            // (group-, brand- or assignment-restricted agents included), so an operator must opt in explicitly.
+            if (data_get($installation->config_json, 'live_tools.enabled', false) !== true) {
+                continue;
+            }
             foreach (self::definitions() as $action => $definition) {
                 $tools[] = [
                     'name' => 'zendesk_'.$installation->id.'_'.$action,
@@ -107,7 +112,14 @@ final readonly class ZendeskTools
             $result = $this->envelope($action, $arguments, $data, $records);
             $result = $this->fit($result, $records);
             if ($names !== [] && $result['records'] !== []) {
-                $result['meta']['users'] = $names;
+                // The id→name map is a convenience: it is added only while the whole result still fits the cap.
+                $withNames = $result;
+                $withNames['meta']['users'] = $names;
+                if (strlen(json_encode($withNames, JSON_THROW_ON_ERROR)) <= (int) config('connector-zendesk.chat_tools.max_result_bytes', 65536)) {
+                    $result = $withNames;
+                } else {
+                    $result['meta']['users_omitted'] = true;
+                }
             }
 
             return ['data' => $result, 'physical_request_count' => $client->physicalRequests, 'provenance' => $tool['provenance']];

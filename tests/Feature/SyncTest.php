@@ -595,4 +595,42 @@ final class SyncTest extends TestCase
         $this->expectException(\RuntimeException::class);
         app(SyncManager::class)->client($installation);
     }
+
+    public function test_history_reconciliation_deletes_a_customer_that_is_now_inactive(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation, true));
+        $this->assertSame(1, SourceState::where('kind', 'user')->count());
+
+        $this->zendesk([
+            '/incremental/users/cursor' => ['users' => [], 'after_cursor' => 'u2', 'end_of_stream' => true],
+            '/users/show_many' => ['users' => [['id' => 10, 'name' => 'Anne', 'role' => 'end-user', 'active' => false]]],
+        ]);
+        $this->finish(app(SyncManager::class)->start($installation, true));
+
+        $this->assertContains(['tenant-a', $installation->id.':user:10'], $this->ingestion->deleted);
+        $this->assertSame(0, SourceState::where('kind', 'user')->count());
+    }
+
+    public function test_rebinding_retires_copies_of_a_content_type_that_is_switched_off(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame(1, SourceState::where('kind', 'user')->count());
+        $before = count($this->ingestion->documents);
+
+        $installation->update(['project_key' => 'other', 'config_json' => ['connection' => $installation->config_json['connection'], 'customers' => ['enabled' => false]]]);
+        $empty = ['after_cursor' => 'x', 'end_of_stream' => true];
+        $this->zendesk([
+            '/incremental/tickets/cursor' => ['tickets' => []] + $empty,
+            '/incremental/organizations' => ['organizations' => [], 'end_time' => 1760000000, 'end_of_stream' => true],
+        ]);
+        $this->finish(app(SyncManager::class)->start($installation));
+
+        $this->assertContains(['tenant-a', $installation->id.':user:10'], $this->ingestion->deleted, 'the copy in the previous project is retired');
+        $this->assertSame(0, SourceState::where('kind', 'user')->count());
+        $this->assertSame([], collect(array_slice($this->ingestion->documents, $before))->where('metadata.source_kind', 'user')->all(), 'a switched-off type is not re-imported into the new project');
+    }
 }

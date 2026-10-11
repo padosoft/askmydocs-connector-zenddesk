@@ -12,7 +12,7 @@ final class AgentUsageProfileTest extends TestCase
         $root = dirname(__DIR__, 2);
         $manifest = json_decode(file_get_contents($root.'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
         $profile = json_decode(file_get_contents($root.'/'.$manifest['extra']['askmydocs']['agent_usage']['zendesk']), true, flags: JSON_THROW_ON_ERROR);
-        $this->installation();
+        $this->installation(['live_tools' => ['enabled' => true]]);
         $actions = array_column(app(ZendeskTools::class)->catalog('support'), 'action');
         $declared = $profile['tools'];
         sort($actions);
