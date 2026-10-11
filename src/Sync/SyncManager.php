@@ -454,6 +454,18 @@ final class SyncManager
     private function customerCheckStep(ConnectorInstallation $installation, SyncRun $run, ZendeskClient $client, array $cp): array
     {
         $kind = (string) ($cp['check_kind'] ?? 'user');
+        $switch = $kind === 'user' ? 'customers.enabled' : 'organizations.enabled';
+        if (! (bool) data_get($installation->config_json, $switch, true)) {
+            // A disabled content type is never reconciled: its existing documents are left untouched.
+            if ($kind === 'user') {
+                $cp['check_kind'] = 'organization';
+                $cp['check_cursor'] = 0;
+
+                return $cp;
+            }
+
+            return $this->transition($installation, $run, $cp, 'customer_check');
+        }
         $states = $this->states($installation)->where('kind', $kind)->where('id', '>', (int) ($cp['check_cursor'] ?? 0))
             ->where('last_seen_run_id', '!=', $run->id)->orderBy('id')->limit(100)->get();
         if ($states->isEmpty()) {

@@ -175,12 +175,18 @@ final readonly class DocumentImporter
             }
         }
         // Hiding internal notes also removes the attachments they carried.
-        $remoteVisible = array_map('intval', array_column($attachments, 'id'));
+        // Deleted or malware-flagged files are positive evidence that the file must not stay indexed.
+        $remoteVisible = [];
+        foreach ($attachments as $attachment) {
+            if (! ($attachment['deleted'] ?? false) && ($attachment['malware_scan_result'] ?? '') !== 'malware_found') {
+                $remoteVisible[] = (int) ($attachment['id'] ?? 0);
+            }
+        }
         foreach ($this->states($installation)->where('kind', 'attachment')->where('parent_id', $ticketId)->get() as $state) {
             if (in_array((string) $state->remote_id, $accepted, true)) {
                 continue;
             }
-            // A disabled import or a size limit is not evidence of remote deletion.
+            // A disabled import or a size limit is not evidence of remote deletion; a flagged or deleted file is.
             if (! in_array((int) $state->remote_id, $remoteVisible, true)) {
                 $this->remove($installation, $run, $state);
             }
@@ -253,22 +259,31 @@ final readonly class DocumentImporter
             throw new \RuntimeException('Zendesk returned an invalid remote identifier.');
         }
         if (in_array($mime, ['text/markdown', 'text/plain'], true)) {
+            // The title is indexed text too: a subject, a customer name or an article title can carry PII.
             $body = $this->ingestion->redactContent($body);
+            $title = $this->ingestion->redactContent($title);
         }
         $identity = ['tenant_id' => $installation->tenant_id, 'installation_id' => $installation->id, 'kind' => $kind, 'remote_id' => $id];
         $state = SourceState::query()->where($identity)->first();
-        $fingerprint = hash('sha256', $body."\0".json_encode($fields)."\0".json_encode($access->toArray()));
-        if ($state !== null && $state->fingerprint === $fingerprint) {
-            $state->forceFill(['last_seen_run_id' => $run->id])->save();
-
-            return;
-        }
         $project = $installation->project_key ?: data_get($installation->config_json, 'project_key', config('kb.ingest.default_project', 'default'));
         $project = is_string($project) && $project !== '' ? $project : 'default';
         if (preg_match('/^[a-zA-Z0-9_-]+$/D', $project) !== 1) {
             throw new \RuntimeException('Zendesk project key is not a safe directory name.');
         }
         $relative = $project.'/connectors/zendesk/tenant-'.hash('sha256', $installation->tenant_id).'/installation-'.$installation->id.'/'.$kind.'/'.$id.'.'.$extension;
+        // The destination is part of the identity of a delivery: rebinding the installation to another project
+        // must re-deliver unchanged content there instead of leaving it only in the previous project.
+        $fingerprint = hash('sha256', $body."\0".$title."\0".json_encode($fields)."\0".json_encode($access->toArray())."\0".$relative);
+        if ($state !== null && $state->fingerprint === $fingerprint) {
+            $state->forceFill(['last_seen_run_id' => $run->id])->save();
+
+            return;
+        }
+        if ($state !== null && $state->relative_path !== $relative) {
+            // Retire the copy indexed under the previous project before the new one is dispatched, so the old
+            // project's readers stop seeing it. Both copies share one remote id, hence this order.
+            $this->ingestion->softDeleteByRemoteId($installation, 'zendesk_remote_id', RemoteId::format((int) $installation->id, $kind, $id));
+        }
         $paths = $this->ingestion->resolveKbSourcePath($relative);
         if (! Storage::disk($paths['disk'])->put($paths['absolute'], $body)) {
             throw new \RuntimeException('Unable to write the Zendesk source file.');

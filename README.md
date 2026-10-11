@@ -183,7 +183,7 @@ You can connect several Zendesk accounts (labels) to one tenant, each with its o
 
 Documents are written to `{project}/connectors/zendesk/tenant-{sha256(tenant)}/installation-{id}/{kind}/{remote id}.{ext}` and carry, under `metadata.converter_hints.zendesk`, the vendor fields (status, priority, ids, tags, timestamps, …) plus the standard `_derived` block (`search_tags`, `status_active`, `recency_bucket`). The remote identifier is stored as `metadata.zendesk_remote_id = "{installation}:{kind}:{id}"` — the key used for deletions and for `readAcl()`.
 
-Text bodies pass through `ConnectorIngestionContract::redactContent()` **before** they are written, so the host's PII policy applies to tickets, comments, profiles and articles. Binary attachments are not redacted (regex redaction cannot inspect PDFs or images); see [docs/security.md](docs/security.md).
+Text bodies and titles pass through `ConnectorIngestionContract::redactContent()` **before** they are written or dispatched, so the host's PII policy applies to tickets, comments, profiles and articles. Binary attachments are not redacted (regex redaction cannot inspect PDFs or images); see [docs/security.md](docs/security.md).
 
 ## Sync semantics
 
@@ -205,9 +205,11 @@ Phases run in a fixed order and skip what you disabled: `tickets → users → o
   - A ticket is removed (with its attachments) when the export reports it with status `deleted`. A `404` on a ticket is *not* evidence (archived or inaccessible tickets answer 404).
   - A customer is removed when the export reports them as non-end-user or inactive; in history mode, customers and organizations the full export did not return are verified with `show_many` and removed if Zendesk omits them.
   - An article is removed when it becomes a draft, or when the article detail answers `404` after it vanished from the list. Absence from a list alone never deletes.
+  - An attachment Zendesk later marks as deleted or malware is removed; one that is merely over a size or count limit is not.
   - Tickets that fall out of the ordinary window are **kept**.
 - **Settings that change content** (internal notes, attachment options, OCR) are hashed; on change the next scan re-imports every known ticket.
-- **Disabling a content type** (customers, organizations, Help Center) stops importing it but does not delete what was already imported.
+- **Disabling a content type** (customers, organizations, Help Center) stops importing it and its history reconciliation, but does not delete what was already imported.
+- **Rebinding to another project** re-delivers unchanged documents to the new project and retires the copy in the previous one.
 
 Details and failure semantics: [docs/sync-semantics.md](docs/sync-semantics.md).
 

@@ -334,6 +334,75 @@ final class SyncTest extends TestCase
         $this->assertSame($run->id, app(SyncManager::class)->start($installation, true)->id);
     }
 
+    public function test_rebinding_the_installation_to_another_project_redelivers_and_retires_the_old_copy(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $before = count($this->ingestion->documents);
+        $installation->forceFill(['project_key' => 'other'])->save();
+        $this->finish(app(SyncManager::class)->start($installation));
+
+        $this->assertGreaterThan($before, count($this->ingestion->documents), 'unchanged content must be delivered to the new project');
+        $ticket = collect($this->ingestion->documents)->where('metadata.source_kind', 'ticket')->last();
+        $this->assertSame('other', $ticket['projectKey']);
+        $this->assertStringStartsWith('other/connectors/zendesk/', $ticket['relativePath']);
+        $this->assertContains(['tenant-a', $installation->id.':ticket:1'], $this->ingestion->deleted, 'the copy under the previous project is retired');
+        $this->assertSame(1, SourceState::where('kind', 'ticket')->count());
+    }
+
+    public function test_titles_are_redacted_like_bodies(): void
+    {
+        $ticket = ['id' => 1, 'subject' => 'Refund for sensitive@example.com', 'status' => 'open', 'requester_id' => 10, 'created_at' => '2026-10-01T10:00:00Z', 'updated_at' => '2026-10-02T10:00:00Z'];
+        $this->zendesk(['/tickets/1' => ['ticket' => $ticket, 'users' => [], 'organizations' => []]]);
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        $document = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'ticket');
+        $this->assertSame('Refund for [redacted]', $document['title']);
+        $this->assertStringNotContainsString('sensitive@example.com', json_encode($this->ingestion->documents));
+    }
+
+    public function test_an_attachment_later_flagged_deleted_or_malware_is_removed_from_the_index(): void
+    {
+        foreach (['deleted' => true, 'malware_scan_result' => 'malware_found'] as $flag => $value) {
+            $this->ingestion->documents = [];
+            $this->ingestion->deleted = [];
+            SourceState::query()->delete();
+            $download = fn ($request) => str_contains($request->url(), '/files/info.txt') ? Http::response('hello world', 200, ['Content-Type' => 'text/plain']) : null;
+            $url = 'https://example.zendesk.com/files/info.txt';
+            $this->zendesk($this->withAttachment($url), $download);
+            $installation = $this->authorized();
+            $this->finish(app(SyncManager::class)->start($installation));
+            $this->assertSame(1, SourceState::where('kind', 'attachment')->count(), $flag);
+
+            $flagged = $this->withAttachment($url);
+            $flagged['/tickets/1/comments']['comments'][0]['attachments'][0][$flag] = $value;
+            $this->zendesk($flagged, $download);
+            $this->finish(app(SyncManager::class)->start($installation));
+
+            $this->assertContains(['tenant-a', $installation->id.':attachment:55'], $this->ingestion->deleted, $flag);
+            $this->assertSame(0, SourceState::where('kind', 'attachment')->count(), $flag);
+            $installation->delete();
+        }
+    }
+
+    public function test_history_reconciliation_skips_the_content_type_that_is_switched_off(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation, true));
+        $this->assertSame(1, SourceState::where('kind', 'user')->count());
+        $this->assertSame(1, SourceState::where('kind', 'organization')->count());
+
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'customers' => ['enabled' => false]]]);
+        // No /users/show_many route: asking for it would hit the fixture's "unexpected path" failure.
+        $this->zendesk(['/incremental/organizations' => ['organizations' => [], 'end_time' => 1760000000, 'end_of_stream' => true], '/organizations/show_many' => ['organizations' => []]]);
+        $this->finish(app(SyncManager::class)->start($installation, true));
+
+        $this->assertContains(['tenant-a', $installation->id.':organization:5'], $this->ingestion->deleted, 'the enabled type is still reconciled');
+        $this->assertNotContains(['tenant-a', $installation->id.':user:10'], $this->ingestion->deleted, 'the disabled type is left untouched');
+        $this->assertSame(1, SourceState::where('kind', 'user')->count());
+    }
+
     public function test_a_tenant_mismatch_is_rejected_before_any_request(): void
     {
         $installation = $this->authorized();

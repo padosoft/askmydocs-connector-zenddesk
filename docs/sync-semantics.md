@@ -44,7 +44,7 @@ Time-based incremental organization export, following `end_time` until `end_of_s
 
 ### `customer_check` (history scans only)
 
-Known customers and organizations not seen by the full export are looked up with `GET /users/show_many` and `GET /organizations/show_many` in groups of 100. Zendesk omits unknown ids, which is the deletion evidence. A user who is now an agent is removed too.
+Known customers and organizations (each only if its own switch is on) not seen by the full export are looked up with `GET /users/show_many` and `GET /organizations/show_many` in groups of 100. Zendesk omits unknown ids, which is the deletion evidence. A user who is now an agent is removed too.
 
 ## Checkpoint anatomy
 
@@ -68,7 +68,11 @@ Never edit a checkpoint by hand. To start over, cancel the scan (disconnect/paus
 
 ## Idempotency and change detection
 
-`fingerprint = sha256(body ⏐ fields ⏐ reported ACL)`. Equal fingerprint → only `last_seen_run_id` is touched and nothing is delivered. The host also upserts by path, so a retry between "delivered" and "checkpoint saved" cannot create a duplicate.
+`fingerprint = sha256(body ⏐ title ⏐ fields ⏐ reported ACL ⏐ destination path)`. Equal fingerprint → only `last_seen_run_id` is touched and nothing is delivered. The host also upserts by path, so a retry between "delivered" and "checkpoint saved" cannot create a duplicate.
+
+### Rebinding to another project
+
+The destination path (which contains the project key) is part of the fingerprint. When an installation is bound to a different KB project, the next scan re-delivers every unchanged document to the new project and first asks the host to retire the copy indexed under the previous one (`softDeleteByRemoteId` on `zendesk_remote_id`), so readers of the old project stop seeing it. Files already written on the old project's path are left on disk.
 
 ## Settings that change what a ticket contains
 
@@ -93,4 +97,4 @@ Restarting after any failure **resumes** the same scan from its checkpoint.
 - Tickets that merely fall outside the ordinary window.
 - Anything on a `404` of a ticket (archived tickets answer 404).
 - Articles absent from a list but not confirmed gone.
-- Documents of a content type the operator later disabled.
+- Documents of a content type the operator later disabled. This includes history scans: `customer_check` reconciles customers only while `customers.enabled` is on, and organizations only while `organizations.enabled` is on.

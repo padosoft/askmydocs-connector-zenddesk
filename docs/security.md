@@ -33,7 +33,7 @@ Only `GET` is ever issued.
 Attachments are customer-supplied files, the highest-risk input the package touches.
 
 - Only `pdf`, `docx`, `txt`, `md`, `markdown` (and image types when `kb.ocr.enabled`) are downloaded; everything else is skipped and counted in `attachments_skipped`.
-- Skipped without downloading: `malware_scan_result = malware_found`, `deleted = true`, over-size, over the per-ticket limit, inline images.
+- Skipped without downloading: `malware_scan_result = malware_found`, `deleted = true`, over-size, over the per-ticket limit, inline images. A previously imported attachment that Zendesk later flags as deleted or malware is **removed from the index** on the next scan; being merely too large or over the limit is not removal evidence.
 - After download the **real bytes** are checked with `finfo`: the detected MIME must match the extension, and the declared `content_type` must agree. A `.docx` must be a ZIP with `[Content_Types].xml` and `word/document.xml`. A mismatch aborts the scan with a clear message instead of ingesting a disguised file.
 - The file name is reduced to its basename with control characters removed; it is never used in a path (the stored path uses the numeric attachment id).
 - Signed or tokenised URLs are never persisted in metadata, documents, checkpoints or tool results.
@@ -41,7 +41,7 @@ Attachments are customer-supplied files, the highest-risk input the package touc
 
 ## PII
 
-- Every `text/markdown` and `text/plain` body is passed through `ConnectorIngestionContract::redactContent()` **before** it is written to the KB disk.
+- Every `text/markdown` and `text/plain` body **and its title** (ticket subject, customer or organization name, article title, text-attachment file name) is passed through `ConnectorIngestionContract::redactContent()` before it is written or dispatched.
 - Emails and names are kept out of document metadata and out of the reported ACL.
 - Live tool results contain what the Zendesk record contains and are **not** redacted by this package; apply your host's output policy. Lookup hashes (`term_hash`, `email_hash`) are used instead of echoing search terms.
 - Internal notes can be excluded (`include_internal_notes`). Turning it off triggers a re-import so previously indexed private text is replaced.
