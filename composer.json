@@ -1,0 +1,72 @@
+{
+    "name": "padosoft/askmydocs-connector-zendesk",
+    "description": "Zendesk connector for AskMyDocs: resumable ingestion of Support tickets, comments, attachments, customers, organizations and Help Center articles, plus read-only live tools for the chat.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "homepage": "https://github.com/padosoft/askmydocs-connector-zenddesk",
+    "keywords": ["laravel", "askmydocs", "zendesk", "connectors", "knowledge-base", "rag", "customer-service"],
+    "authors": [{"name": "Padosoft", "homepage": "https://github.com/padosoft"}],
+    "support": {
+        "issues": "https://github.com/padosoft/askmydocs-connector-zenddesk/issues",
+        "source": "https://github.com/padosoft/askmydocs-connector-zenddesk"
+    },
+    "require": {
+        "php": "^8.3",
+        "ext-curl": "*",
+        "ext-fileinfo": "*",
+        "ext-zip": "*",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
+        "illuminate/http": "^12.0|^13.0",
+        "illuminate/queue": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
+        "league/html-to-markdown": "^5.1",
+        "padosoft/askmydocs-connector-base": "^1.6"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.18",
+        "mockery/mockery": "^1.6",
+        "orchestra/testbench": "^10.0|^11.0",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Padosoft\\AskMyDocsConnectorZendesk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Padosoft\\AskMyDocsConnectorZendesk\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Padosoft\\AskMyDocsConnectorZendesk\\ZendeskServiceProvider"
+            ]
+        },
+        "askmydocs": {
+            "agent_usage": {
+                "zendesk": "resources/agent-usage.json"
+            },
+            "connectors": [
+                "Padosoft\\AskMyDocsConnectorZendesk\\ZendeskConnector"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "format": "pint"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {"sort-packages": true},
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/padosoft/askmydocs-connector-base"
+        }
+    ]
+}

@@ -1,0 +1,76 @@
+# Security
+
+This page lists what the package defends against, how, and what it deliberately leaves to the host.
+
+## Threat model in one paragraph
+
+The connector reads data written by **customers** (ticket text, attachment contents, profile fields) and hands it to a platform whose agents also have tools. Content is therefore untrusted input. Credentials give broad read access to a customer-service desk. URLs inside API responses (attachment links) are attacker-influenced. The package's job is to keep secrets confined, keep outbound requests on a short leash, keep untrusted text labelled as such, and never claim more certainty than Zendesk gave it.
+
+## Credentials
+
+| Control | Where |
+|---|---|
+| Secret stored only in the encrypted `connector-base` vault; never in `config_json`, logs, exception messages or checkpoints | `ZendeskConnector::handleOAuthCallback`, `SyncManager::client` |
+| Verified (`GET /users/me`, real admin identity) **before** it replaces the stored secret | `ZendeskConnector::verify` |
+| State token is single-use, tenant- and installation-bound | `BaseConnector::issueOAuthState` / `consumeOAuthState` |
+| Sent only to `https://{subdomain}.zendesk.com`; on attachment downloads only when the URL host equals that host | `ZendeskClient::download` |
+| Upstream error bodies are never echoed; only status, `Retry-After` and allow-listed field names survive | `ZendeskApiException`, `ZendeskClient::validationFields` |
+| Use a dedicated admin account (exports are admin-only); the connector is read-only by construction | [credential-setup](credential-setup.md) |
+
+## Outbound requests (SSRF)
+
+`UrlPolicy` runs before any socket is opened:
+
+1. **API calls** — scheme `https`, port 443, no userinfo or fragment, host exactly `{label}.zendesk.com`, path restricted to `^/[a-z0-9_/-]+$` with no `//` (lowercase letters, digits, underscore, hyphen for locales such as `en-us`, and slashes: no dots, queries or traversal).
+2. **Attachments** — the host must match `attachments.allowed_hosts`; **every redirect hop** (max 3, `https` only) is re-validated; redirects are never followed automatically.
+3. **DNS pinning** — the host is resolved, every A/AAAA record must be public (private and reserved ranges are refused), and the connection is pinned to those addresses with `CURLOPT_RESOLVE`, removing the time-of-check/time-of-use gap. `http.resolve_dns=false` exists for faked HTTP in tests; never set it in production.
+4. **Bounded responses** — JSON capped at `http.max_json_bytes`, attachments at the configured size, both streamed and checked incrementally, so a hostile `Content-Length` cannot exhaust memory.
+
+Only `GET` is ever issued.
+
+## Attachments
+
+Attachments are customer-supplied files, the highest-risk input the package touches.
+
+- Only `pdf`, `docx`, `txt`, `md`, `markdown` (and image types when `kb.ocr.enabled`) are downloaded; everything else is skipped and counted in `attachments_skipped`.
+- Skipped without downloading: any `malware_scan_result` other than `malware_not_found` (so `malware_found`, `failed_to_scan`, `not_scanned` and an absent field; scans can lag, and unverified customer-controlled bytes must not reach the host's PDF/DOCX/OCR pipeline — `attachments.allow_unscanned` is the explicit fail-open opt-in, and `malware_found` is never fetched), `deleted = true`, over-size, over the per-ticket limit, inline images. A previously imported attachment that Zendesk later flags as deleted or malware is **removed from the index** on the next scan; being merely too large or over the limit is not removal evidence.
+- After download the **real bytes** are checked with `finfo`: the detected MIME must match the extension, and the declared `content_type` must agree. A `.docx` must be a ZIP with `[Content_Types].xml` and `word/document.xml`. A mismatch aborts the scan with a clear message instead of ingesting a disguised file.
+- The file name is reduced to its basename with control characters removed; it is never used in a path (the stored path uses the numeric attachment id).
+- Signed or tokenised URLs are never persisted in metadata, documents, checkpoints or tool results.
+- Binary attachments are **not** PII-redacted (a regex cannot inspect a PDF or an image). If that matters to you, disable `attachments.enabled`.
+
+## PII
+
+- Every `text/markdown` and `text/plain` body **and its title** (ticket subject, customer or organization name, article title, text-attachment file name; the file name is never copied into metadata) is passed through `ConnectorIngestionContract::redactContent()` before it is written or dispatched.
+- Emails and names are kept out of document metadata and out of the reported ACL.
+- Tags, article labels and organization domain names are passed through the host redactor before they enter the metadata envelope (the envelope itself is not redacted by the host), alongside bodies and titles.
+- Live tools are **opt-in per installation** (`live_tools.enabled`, default off) because they run with the installation's admin credential rather than the asking user's Zendesk permissions.
+- Live tool results contain what the Zendesk record contains and are **not** redacted by this package; apply your host's output policy. Lookup hashes (`term_hash`, `email_hash`) are used instead of echoing search terms.
+- Internal notes can be excluded (`include_internal_notes`). Turning it off triggers a re-import so previously indexed private text is replaced.
+
+## Provenance
+
+`provenanceTier()` returns, per installation, the stored `provenance_tier` setting: `untrusted-external` by default (customers write tickets), `trusted-internal` if the operator says the installation carries staff-authored content only. Unknown or malformed stored values fail **closed** to `untrusted-external`. The method performs no network call and is safe on the ingestion path. The agent usage profile additionally instructs the orchestrator to treat ticket and comment text as data, never as instructions.
+
+## Source access reporting
+
+`readAcl($remoteId)` and the `_source_access` metadata key report, never decide:
+
+| Object | Reported |
+|---|---|
+| Ticket | *unknown*, with the ticket's support group as a partial hint `zendesk:group:{id}` — agent access can be limited by role to assigned tickets, groups, brands or organizations, which cannot be represented, so no blanket "all agents" grant is reported |
+| Customer, organization | *unknown* (same reason) |
+| Attachment | inherits from its ticket |
+| Article, no user segment | `anyone` |
+| Article with `user_segment_id` and/or a non-empty `user_segment_ids` | one group `zendesk:user_segment:{id}` per segment (the plural list wins even when the singular field is null) |
+| Article whose payload carries neither field, or a malformed one (non-integer segment id, non-list plural field) | `SourceAccess::unknown()` — a missing or malformed field is never read as a public share or as a guessed segment |
+
+The requester is **not** reported as a reader of their ticket: the indexed document contains internal notes the requester can never see. If Zendesk cannot answer (5xx, malformed), `SourceAccess::unknown()` is returned — never an empty allow-list, because "nobody" and "we could not find out" must stay distinguishable. 401/403 are raised as `ConnectorAuthException`, never swallowed.
+
+## Tenant isolation
+
+Every installation lookup filters on `tenant_id` and connector name; `SyncManager::client()` refuses a mismatch; the live-tool catalog is built from the current tenant only; the sync lock and document paths are tenant-scoped; `ProcessSyncBatch` restores the previous tenant context in a `finally`. Tests cover cross-tenant execution, listing and ACL reads.
+
+## Reporting a vulnerability
+
+Please do not open a public issue for security problems. Contact Padosoft through <https://padosoft.com/> or the repository's private security advisory form.

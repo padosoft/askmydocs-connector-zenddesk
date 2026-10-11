@@ -1,0 +1,105 @@
+# Sync semantics
+
+## Vocabulary
+
+- **Scan** — one `SyncRun` row: mode, status (`queued`, `running`, `failed`, `completed`, `cancelled`), checkpoint, counters.
+- **Batch** — one `ProcessSyncBatch` job: up to `sync.batch_items` steps or `sync.batch_seconds` seconds.
+- **Step** — one unit of work inside a phase.
+- **Source state** — a `zendesk_source_states` row remembering the fingerprint last delivered for one remote object.
+
+## Starting a scan
+
+`SyncManager::start($installation, history: false)`:
+
+1. refuses an installation that is not `active` or `errored`, and refuses a synchronous queue: the connection checked is the one the jobs really use (`CONNECTOR_ZENDESK_CONNECTION` when set, otherwise `queue.default`);
+2. inside a transaction that locks the installation row, **reuses** any scan that is queued, running or failed (a failed one is re-queued) — so two operators clicking *Sync now* never create two scans, and *Fetch all* only reuses a *history* scan;
+3. otherwise creates a scan whose export start is
+   - ordinary: `now - date_window_days`, moved forward to the previous completed scan's start minus `sync.overlap_seconds` when the window has not grown;
+   - history: the Unix epoch;
+   and never later than `now - max(60, sync.export_min_age_seconds)` because Zendesk rejects an export `start_time` that is too recent;
+4. dispatches the first `ProcessSyncBatch`.
+
+The installation's `last_sync_at` advances **only when a scan completes**, to the scan's *start* time. A failed or cancelled scan never moves the watermark, so nothing is skipped on the next run.
+
+## Phases
+
+### `tickets`
+
+Reads `GET /incremental/tickets/cursor` — first with `start_time`, then with the returned `after_cursor` — until `end_of_stream` (plus `support_type_scope` when `sync.ticket_support_type_scope` is set to `agent`, `ai_agent` or `all`). Each exported ticket becomes a pending item; items are then processed one per step:
+
+- status `deleted` → remove the ticket document and its attachments;
+- otherwise `GET /tickets/{id}?include=users,organizations` and every page of `GET /tickets/{id}/comments?include=users` (cursor pagination, 100 per page), then render and deliver. A `404` between export and detail is ignored: if the ticket was really deleted the stream reports it.
+
+### `users` (if `customers.enabled`)
+
+Cursor-based incremental user export, requested in pages of 100 so that a timeout or a `429` repeats little work. **End users** become profile documents. Anyone else, or a user reported inactive (Zendesk's representation of a deleted user), has their existing profile document removed.
+
+### `organizations` (if `organizations.enabled`)
+
+Time-based incremental organization export, following `end_time` until `end_of_stream` is true (a payload without the flag falls back to a short or empty page, or an `end_time` of 0). Each organization becomes a profile document. A boundary that cannot advance raises instead of looping.
+
+### `articles` and `article_check` (if `help_center.enabled`)
+
+`articles` walks `GET /help_center/articles` (or the locale-scoped path when `help_center.locale` is set) with cursor pagination. Drafts delete their existing document. `article_check` then visits every known article the walk did **not** meet in this scan and asks Zendesk for its detail: success re-imports it, `404` confirms deletion, anything else is an error. If `help_center.locale` is set and the article's own locale differs (compared case-insensitively, `_` and `-` equivalent), the article is outside the configured scope and its document is retired instead of re-imported — this is what happens to old-language articles after you change the locale.
+
+### `customer_check` (history scans only)
+
+Known customers and organizations (each only if its own switch is on) not seen by the full export are looked up with `GET /users/show_many` and `GET /organizations/show_many` in groups of 100. Zendesk omits unknown ids, which is the deletion evidence. A user who is now an agent is removed too.
+
+## Checkpoint anatomy
+
+```json
+{
+  "phase": "tickets",
+  "since": 1760000000,
+  "initial_since": 1760000000,
+  "cursor": "…opaque…",
+  "pending": [{"id": 4821, "status": "open"}],
+  "stream_done": false,
+  "pages": 3,
+  "window_days": 90,
+  "projection_hash": "…sha256…",
+  "refresh": false,
+  "refresh_kind": "ticket",
+  "refresh_cursor": 0
+}
+```
+
+Never edit a checkpoint by hand. To start over, cancel the scan (disconnect/pause) and start a new one.
+
+## Idempotency and change detection
+
+`fingerprint = sha256(body ⏐ title ⏐ fields ⏐ reported ACL ⏐ destination path)`. Equal fingerprint → only `last_seen_run_id` is touched and nothing is delivered. The host also upserts by path, so a retry between "delivered" and "checkpoint saved" cannot create a duplicate.
+
+### Rebinding to another project
+
+The destination path (which contains the project key) is part of the fingerprint, and the project binding is part of the projection hash below. When an installation is bound to a different KB project, the next scan runs the refresh pass, which re-delivers every known ticket, customer and organization to the new project (articles are re-enumerated on every scan anyway). Before each re-delivery the connector asks the host to retire the copy indexed under the previous project (`softDeleteByRemoteId` on `zendesk_remote_id`), so readers of the old project stop seeing it. Files already written on the old project's path are left on disk.
+
+The refresh pass is needed because incremental exports resume near the previous watermark: an object that did not change in Zendesk would otherwise never be exported again. For a content type that is switched off the pass never re-imports, but it retires any copy still indexed under a previous project, so a rebinding cannot leave customer, organization, Help Center article or attachment documents readable in the old project. The retired state is not kept: enabling the type again back-fills the configured window, and records older than that need a *Fetch all* scan.
+
+If the refresh cannot re-read a known object (`404`), the object is **retired** rather than left as it was: it cannot be regenerated under the new settings, the exports will not revisit it, and keeping the old copy would keep stale private notes, or a copy in the previous project, indefinitely. This is the one place where a `404` on a known object removes its document; in the normal ticket stream a `404` is still ignored and deletions come from the export itself.
+
+## Settings that change what an object contains or where it lives
+
+The effective project, `include_internal_notes`, the `attachments` options and the host's `kb.ocr.enabled` are hashed into `projection_hash`. When the hash differs from the previous completed scan, the next scan begins with a `refresh` pass that re-imports every known ticket, then every known customer, then every known organization (one per step, each only while its content type is enabled) before the normal phases. This is how switching internal notes off removes already-indexed private text, and its attachments, from the KB.
+
+## Failure handling
+
+| Event | Behaviour |
+|---|---|
+| `429` | Status stays `queued`; the batch is re-queued after `Retry-After` seconds (60 when absent); checkpoint untouched |
+| `5xx`, connection error | Retried up to `http.attempts`; then the scan becomes `failed`, the installation `errored`, the exception rethrown |
+| `401`/`403` | Not retried; scan `failed`, installation `errored`; fix the credential/role and start again to resume |
+| Worker killed by timeout | `ProcessSyncBatch::failed()` marks the scan `failed` with a fixed message — no exception text is stored |
+| Installation paused/disabled mid-batch | Scan becomes `cancelled` at the next step; watermark unchanged |
+| Second batch for one installation | Deferred 30 s by an atomic cache lock |
+| Export cursor repeats | Scan fails loudly: *cursor did not advance* |
+
+Restarting after any failure **resumes** the same scan from its checkpoint.
+
+## What is never deleted
+
+- Tickets that merely fall outside the ordinary window.
+- Anything on a `404` of a ticket in the normal stream (the export reports deletions). The refresh pass is the documented exception, see above.
+- Articles absent from a list but not confirmed gone.
+- Documents of a content type the operator later disabled. This includes history scans: `customer_check` reconciles customers only while `customers.enabled` is on, and organizations only while `organizations.enabled` is on.
