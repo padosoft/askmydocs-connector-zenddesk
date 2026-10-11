@@ -87,7 +87,7 @@ Every dispatched document carries:
 | `converter_hints._derived` | `search_tags`, `status_active` (open ticket / non-suspended customer / non-outdated article), `recency_bucket`, `owner` (always null — personal emails are not copied to metadata) |
 | `_source_access` | The reported ACL — see [security](security.md#source-access-reporting) |
 
-Names and emails of people appear only in document bodies (subject to the host's redaction), never in the metadata.
+Names and emails of people, and attachment file names, appear only in document bodies and titles (subject to the host's redaction), never in the metadata.
 
 ## Remote identifiers
 

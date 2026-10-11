@@ -223,7 +223,7 @@ final readonly class DocumentImporter
         if (! $compatible || ! $declaredOk) {
             throw new \RuntimeException('Zendesk attachment MIME does not match its file type.');
         }
-        $this->write($installation, $run, 'attachment', (string) $attachment['id'], $name, $bytes, $mime, $ticketId, ['filename' => $name, 'size' => strlen($bytes)], SourceAccess::inherited(), true, $extension);
+        $this->write($installation, $run, 'attachment', (string) $attachment['id'], $name, $bytes, $mime, $ticketId, ['size' => strlen($bytes)], SourceAccess::inherited(), true, $extension);
 
         return true;
     }

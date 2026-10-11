@@ -51,7 +51,7 @@ sequenceDiagram
 State is a JSON checkpoint on `zendesk_sync_runs`. Each `step()` performs *one* unit of work (one export page, one ticket, one article, a batch of 100 existence checks) and returns the updated checkpoint; `batch()` repeats `step()` until the item or time budget is spent, then re-queues.
 
 ```
-refresh? ─▶ tickets ─▶ users ─▶ organizations ─▶ articles ─▶ article_check ─▶ (history only) customer_check ─▶ done
+refresh (tickets → customers → organizations)? ─▶ tickets ─▶ users ─▶ organizations ─▶ articles ─▶ article_check ─▶ (history only) customer_check ─▶ done
 ```
 
 Reasons for the shape:

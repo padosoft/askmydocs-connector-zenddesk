@@ -59,7 +59,8 @@ Known customers and organizations (each only if its own switch is on) not seen b
   "pages": 3,
   "window_days": 90,
   "projection_hash": "…sha256…",
-  "refresh_tickets": false,
+  "refresh": false,
+  "refresh_kind": "ticket",
   "refresh_cursor": 0
 }
 ```
@@ -72,11 +73,13 @@ Never edit a checkpoint by hand. To start over, cancel the scan (disconnect/paus
 
 ### Rebinding to another project
 
-The destination path (which contains the project key) is part of the fingerprint. When an installation is bound to a different KB project, the next scan re-delivers every unchanged document to the new project and first asks the host to retire the copy indexed under the previous one (`softDeleteByRemoteId` on `zendesk_remote_id`), so readers of the old project stop seeing it. Files already written on the old project's path are left on disk.
+The destination path (which contains the project key) is part of the fingerprint, and the project binding is part of the projection hash below. When an installation is bound to a different KB project, the next scan runs the refresh pass, which re-delivers every known ticket, customer and organization to the new project (articles are re-enumerated on every scan anyway). Before each re-delivery the connector asks the host to retire the copy indexed under the previous project (`softDeleteByRemoteId` on `zendesk_remote_id`), so readers of the old project stop seeing it. Files already written on the old project's path are left on disk.
 
-## Settings that change what a ticket contains
+The refresh pass is needed because incremental exports resume near the previous watermark: an object that did not change in Zendesk would otherwise never be exported again.
 
-`include_internal_notes`, the `attachments` options and the host's `kb.ocr.enabled` are hashed into `projection_hash`. When the hash differs from the previous completed scan, the next scan begins with a `refresh` pass that re-imports every known ticket (one per step) before the normal phases. This is how switching internal notes off removes already-indexed private text, and its attachments, from the KB.
+## Settings that change what an object contains or where it lives
+
+The effective project, `include_internal_notes`, the `attachments` options and the host's `kb.ocr.enabled` are hashed into `projection_hash`. When the hash differs from the previous completed scan, the next scan begins with a `refresh` pass that re-imports every known ticket, then every known customer, then every known organization (one per step, each only while its content type is enabled) before the normal phases. This is how switching internal notes off removes already-indexed private text, and its attachments, from the KB.
 
 ## Failure handling
 

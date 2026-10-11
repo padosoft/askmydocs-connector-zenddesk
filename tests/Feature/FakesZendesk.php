@@ -55,6 +55,7 @@ trait FakesZendesk
                     ['id' => 10, 'name' => 'Anne Richard', 'email' => 'anne@example.test', 'role' => 'end-user', 'organization_id' => 5, 'notes' => 'VIP customer'],
                     ['id' => 11, 'name' => 'Sam Agent', 'email' => 'sam@example.com', 'role' => 'agent'],
                 ], 'after_cursor' => 'ucur-1', 'end_of_stream' => true],
+                '/users/10' => ['user' => ['id' => 10, 'name' => 'Anne Richard', 'email' => 'anne@example.test', 'role' => 'end-user', 'organization_id' => 5, 'notes' => 'VIP customer']],
                 '/organizations/5' => ['organization' => ['id' => 5, 'name' => 'Acme Corp']],
                 '/incremental/organizations' => ['organizations' => [['id' => 5, 'name' => 'Acme Corp', 'domain_names' => ['acme.test'], 'notes' => 'Key account']], 'end_time' => 1760000000, 'end_of_stream' => true],
                 '/help_center/articles' => ['articles' => [

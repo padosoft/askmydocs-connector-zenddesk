@@ -334,21 +334,42 @@ final class SyncTest extends TestCase
         $this->assertSame($run->id, app(SyncManager::class)->start($installation, true)->id);
     }
 
-    public function test_rebinding_the_installation_to_another_project_redelivers_and_retires_the_old_copy(): void
+    public function test_rebinding_the_installation_to_another_project_moves_every_known_object_even_when_exports_are_empty(): void
     {
         $this->zendesk();
         $installation = $this->authorized();
         $this->finish(app(SyncManager::class)->start($installation));
         $before = count($this->ingestion->documents);
         $installation->forceFill(['project_key' => 'other'])->save();
+
+        // Real incremental exports resume near the watermark: nothing changed in Zendesk, so they return nothing.
+        $empty = ['after_cursor' => 'x', 'end_of_stream' => true];
+        $this->zendesk([
+            '/incremental/tickets/cursor' => ['tickets' => []] + $empty,
+            '/incremental/users/cursor' => ['users' => []] + $empty,
+            '/incremental/organizations' => ['organizations' => [], 'end_time' => 1760000000, 'end_of_stream' => true],
+        ]);
         $this->finish(app(SyncManager::class)->start($installation));
 
-        $this->assertGreaterThan($before, count($this->ingestion->documents), 'unchanged content must be delivered to the new project');
-        $ticket = collect($this->ingestion->documents)->where('metadata.source_kind', 'ticket')->last();
-        $this->assertSame('other', $ticket['projectKey']);
-        $this->assertStringStartsWith('other/connectors/zendesk/', $ticket['relativePath']);
-        $this->assertContains(['tenant-a', $installation->id.':ticket:1'], $this->ingestion->deleted, 'the copy under the previous project is retired');
+        $this->assertGreaterThan($before, count($this->ingestion->documents), 'unchanged objects must be delivered to the new project');
+        foreach (['ticket', 'user', 'organization', 'article'] as $kind) {
+            $document = collect($this->ingestion->documents)->where('metadata.source_kind', $kind)->last();
+            $this->assertSame('other', $document['projectKey'], $kind);
+            $this->assertStringStartsWith('other/connectors/zendesk/', $document['relativePath'], $kind);
+            $this->assertContains(['tenant-a', $installation->id.':'.$kind.':'.$document['metadata']['remote_id']], $this->ingestion->deleted, $kind.': the previous copy is retired');
+        }
         $this->assertSame(1, SourceState::where('kind', 'ticket')->count());
+    }
+
+    public function test_a_text_attachment_name_with_pii_reaches_neither_the_title_nor_the_metadata(): void
+    {
+        $url = 'https://example.zendesk.com/files/leak.txt';
+        $this->zendesk($this->withAttachment($url, 'sensitive@example.com.txt'), fn ($request) => str_contains($request->url(), '/files/leak.txt') ? Http::response('hello', 200, ['Content-Type' => 'text/plain']) : null);
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        $attachment = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'attachment');
+        $this->assertNotNull($attachment);
+        $this->assertSame('[redacted].txt', $attachment['title']);
+        $this->assertStringNotContainsString('sensitive@example.com', json_encode($attachment['metadata']));
     }
 
     public function test_titles_are_redacted_like_bodies(): void

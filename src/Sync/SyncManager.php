@@ -21,7 +21,7 @@ use Padosoft\AskMyDocsConnectorZendesk\Http\ZendeskClient;
  * `zendesk_sync_runs.checkpoint`, advanced one small step at a time.
  *
  * Phases, in order (disabled ones are skipped):
- *   refresh        re-import every known ticket when a content setting changed
+ *   refresh        re-import every known ticket, customer and organization when a content setting or the project binding changed
  *   tickets        incremental cursor-based ticket export → one detail+comments import per ticket
  *   users          incremental cursor-based user export, end-users only
  *   organizations  incremental (time-based) organization export
@@ -109,7 +109,7 @@ final class SyncManager
                 'status' => 'queued', 'scan_started_at' => now(), 'counts' => [],
                 'checkpoint' => [
                     'phase' => 'tickets', 'since' => $since->getTimestamp(), 'initial_since' => $since->getTimestamp(), 'cursor' => null, 'pending' => [], 'pages' => 0,
-                    'window_days' => $history ? 36500 : $window, 'projection_hash' => $projection, 'refresh_tickets' => $refresh, 'refresh_cursor' => 0,
+                    'window_days' => $history ? 36500 : $window, 'projection_hash' => $projection, 'refresh' => $refresh, 'refresh_kind' => 'ticket', 'refresh_cursor' => 0,
                 ],
             ]);
         });
@@ -211,7 +211,7 @@ final class SyncManager
     private function step(ConnectorInstallation $installation, SyncRun $run, ZendeskClient $client): bool
     {
         $cp = $run->checkpoint;
-        if ($cp['refresh_tickets'] ?? false) {
+        if ($cp['refresh'] ?? false) {
             $run->checkpoint = $this->refreshStep($installation, $run, $client, $cp);
 
             return false;
@@ -233,21 +233,42 @@ final class SyncManager
     }
 
     /**
+     * Re-import what is already known, one object per step: tickets, then customers, then organizations.
+     * Incremental exports resume near the previous watermark, so an object that did not change in Zendesk
+     * would otherwise never be seen again after a setting or the project binding changed.
+     *
      * @param  array<string,mixed>  $cp
      * @return array<string,mixed>
      */
     private function refreshStep(ConnectorInstallation $installation, SyncRun $run, ZendeskClient $client, array $cp): array
     {
-        $state = $this->states($installation)->where('kind', 'ticket')->where('id', '>', (int) ($cp['refresh_cursor'] ?? 0))->orderBy('id')->first();
+        $kind = (string) ($cp['refresh_kind'] ?? 'ticket');
+        $enabled = match ($kind) {
+            'user' => (bool) data_get($installation->config_json, 'customers.enabled', true),
+            'organization' => (bool) data_get($installation->config_json, 'organizations.enabled', true),
+            default => true,
+        };
+        $state = $enabled ? $this->states($installation)->where('kind', $kind)->where('id', '>', (int) ($cp['refresh_cursor'] ?? 0))->orderBy('id')->first() : null;
         if ($state === null) {
-            $cp['refresh_tickets'] = false;
+            $next = ['ticket' => 'user', 'user' => 'organization'][$kind] ?? null;
+            if ($next === null) {
+                $cp['refresh'] = false;
+
+                return $cp;
+            }
+            $cp['refresh_kind'] = $next;
+            $cp['refresh_cursor'] = 0;
 
             return $cp;
         }
         try {
-            $this->importer->ticket($installation, $run, $client, (int) $state->remote_id);
+            match ($kind) {
+                'ticket' => $this->importer->ticket($installation, $run, $client, (int) $state->remote_id),
+                'user' => $this->refreshUser($installation, $run, $client, (int) $state->remote_id),
+                default => $this->refreshOrganization($installation, $run, $client, (int) $state->remote_id),
+            };
         } catch (ZendeskApiException $exception) {
-            // A 404 on a known ticket is not deletion evidence here: the export stream reports deletions.
+            // A 404 on a known object is not deletion evidence here: the export streams report deletions.
             if ($exception->status !== 404) {
                 throw $exception;
             }
@@ -255,6 +276,29 @@ final class SyncManager
         $cp['refresh_cursor'] = $state->id;
 
         return $cp;
+    }
+
+    private function refreshUser(ConnectorInstallation $installation, SyncRun $run, ZendeskClient $client, int $id): void
+    {
+        $user = $client->get('/users/'.$id)['user'] ?? null;
+        if (! is_array($user) || ! isset($user['id'])) {
+            throw new \RuntimeException('Zendesk user detail is missing its identity.');
+        }
+        if (($user['role'] ?? '') !== 'end-user' || ($user['active'] ?? true) === false) {
+            $this->importer->delete($installation, $run, 'user', (string) $user['id']);
+
+            return;
+        }
+        $this->importer->user($installation, $run, $user, $this->organizationName($client, $user['organization_id'] ?? null));
+    }
+
+    private function refreshOrganization(ConnectorInstallation $installation, SyncRun $run, ZendeskClient $client, int $id): void
+    {
+        $organization = $client->get('/organizations/'.$id)['organization'] ?? null;
+        if (! is_array($organization) || ! isset($organization['id'])) {
+            throw new \RuntimeException('Zendesk organization detail is missing its identity.');
+        }
+        $this->importer->organization($installation, $run, $organization);
     }
 
     /**
@@ -577,10 +621,13 @@ final class SyncManager
         return $locale;
     }
 
-    /** Hash of every setting that changes what an already-imported ticket would contain. */
+    /** Hash of everything that changes what an already-imported object would contain or where it lives. */
     public static function projection(ConnectorInstallation $installation): string
     {
+        $project = $installation->project_key ?: data_get($installation->config_json, 'project_key', config('kb.ingest.default_project', 'default'));
+
         return hash('sha256', json_encode([
+            'project' => is_string($project) && $project !== '' ? $project : 'default',
             'internal' => data_get($installation->config_json, 'include_internal_notes', true),
             'attachments' => data_get($installation->config_json, 'attachments', []),
             'ocr' => config('kb.ocr.enabled', false),

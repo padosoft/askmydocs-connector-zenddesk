@@ -207,9 +207,9 @@ Phases run in a fixed order and skip what you disabled: `tickets → users → o
   - An article is removed when it becomes a draft, or when the article detail answers `404` after it vanished from the list. Absence from a list alone never deletes.
   - An attachment Zendesk later marks as deleted or malware is removed; one that is merely over a size or count limit is not.
   - Tickets that fall out of the ordinary window are **kept**.
-- **Settings that change content** (internal notes, attachment options, OCR) are hashed; on change the next scan re-imports every known ticket.
+- **Settings that change content or destination** (internal notes, attachment options, OCR, the KB project binding) are hashed; on change the next scan first re-imports every known ticket, customer and organization.
 - **Disabling a content type** (customers, organizations, Help Center) stops importing it and its history reconciliation, but does not delete what was already imported.
-- **Rebinding to another project** re-delivers unchanged documents to the new project and retires the copy in the previous one.
+- **Rebinding to another project** re-delivers every known object to the new project through that refresh pass and retires the copy in the previous one.
 
 Details and failure semantics: [docs/sync-semantics.md](docs/sync-semantics.md).
 
