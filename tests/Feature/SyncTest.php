@@ -633,4 +633,53 @@ final class SyncTest extends TestCase
         $this->assertSame(0, SourceState::where('kind', 'user')->count());
         $this->assertSame([], collect(array_slice($this->ingestion->documents, $before))->where('metadata.source_kind', 'user')->all(), 'a switched-off type is not re-imported into the new project');
     }
+
+    public function test_a_private_first_comment_is_not_rendered_as_the_description_when_internal_notes_are_off(): void
+    {
+        $ticket = ['id' => 1, 'subject' => 'Printer on fire', 'status' => 'open', 'description' => 'PRIVATE-FIRST-NOTE', 'requester_id' => 10, 'tags' => []];
+        $routes = [
+            '/tickets/1' => ['ticket' => $ticket, 'users' => []],
+            '/tickets/1/comments' => ['comments' => [['id' => 100, 'author_id' => 11, 'public' => false, 'created_at' => '2026-10-01T10:00:00Z', 'plain_body' => 'PRIVATE-FIRST-NOTE', 'attachments' => []]], 'meta' => ['has_more' => false]],
+        ];
+        $this->zendesk($routes);
+        $this->finish(app(SyncManager::class)->start($this->authorized(['include_internal_notes' => false])));
+        $document = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'ticket');
+        $this->assertStringNotContainsString('PRIVATE-FIRST-NOTE', Storage::disk('local')->get($document['relativePath']));
+
+        // With internal notes enabled the same ticket is indexed in full.
+        $this->ingestion->documents = [];
+        SourceState::query()->delete();
+        $this->zendesk($routes);
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        $document = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'ticket');
+        $this->assertStringContainsString('PRIVATE-FIRST-NOTE', Storage::disk('local')->get($document['relativePath']));
+    }
+
+    public function test_rebinding_retires_help_center_articles_and_attachments_that_are_switched_off(): void
+    {
+        $url = 'https://example.zendesk.com/files/info.txt';
+        $download = fn ($request) => str_contains($request->url(), '/files/info.txt') ? Http::response('hello world', 200, ['Content-Type' => 'text/plain']) : null;
+        $this->zendesk($this->withAttachment($url), $download);
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame(1, SourceState::where('kind', 'article')->count());
+        $this->assertSame(1, SourceState::where('kind', 'attachment')->count());
+        $before = count($this->ingestion->documents);
+
+        $installation->update(['project_key' => 'other', 'config_json' => ['connection' => $installation->config_json['connection'], 'help_center' => ['enabled' => false], 'attachments' => ['enabled' => false]]]);
+        $empty = ['after_cursor' => 'x', 'end_of_stream' => true];
+        $this->zendesk([
+            '/incremental/tickets/cursor' => ['tickets' => []] + $empty,
+            '/incremental/users/cursor' => ['users' => []] + $empty,
+            '/incremental/organizations' => ['organizations' => [], 'end_time' => 1760000000, 'end_of_stream' => true],
+        ]);
+        $this->finish(app(SyncManager::class)->start($installation));
+
+        $this->assertSame(0, SourceState::where('kind', 'article')->count());
+        $this->assertSame(0, SourceState::where('kind', 'attachment')->count());
+        $this->assertNotEmpty(array_filter($this->ingestion->deleted, fn ($d) => str_contains($d[1], ':article:')));
+        $this->assertNotEmpty(array_filter($this->ingestion->deleted, fn ($d) => str_contains($d[1], ':attachment:')));
+        $after = collect(array_slice($this->ingestion->documents, $before));
+        $this->assertSame([], $after->whereIn('metadata.source_kind', ['article', 'attachment'])->all(), 'switched-off types are not re-imported');
+    }
 }

@@ -74,6 +74,7 @@ Every tool schema is `additionalProperties: false`. Before any HTTP call the exe
 - **`url`** is always built from the account host, except for an article's `html_url`, which is used only when its host is the account's own.
 - **`meta.users`** maps ids to display names when Zendesk side-loaded them (never emails).
 - **`coverage.email_hash` / `meta.term_hash`** are SHA-256 hashes so a client can correlate requests without storing the address or name.
+- **Internal notes.** A ticket's `description` is its first comment and may be private, so `get_ticket` and ticket searches return it as the body only while `include_internal_notes` is on.
 - **Side-loaded names.** `meta.users` (id → name) is added only while the whole result still fits `chat_tools.max_result_bytes`; otherwise it is dropped and `meta.users_omitted` is `true`.
 - **Truncation.** Bodies are cut at 16 000 characters (`body_truncated: true` on the record). Records are added one at a time while the JSON stays under `chat_tools.max_result_bytes`; if the cap stops the list, `truncated` is true and `coverage.complete` false.
 

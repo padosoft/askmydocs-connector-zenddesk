@@ -83,7 +83,7 @@ final readonly class DocumentImporter
             }
         }
         $organization = self::organizationName($detail, $ticket['organization_id'] ?? null);
-        $body = Markdown::ticket($ticket, $comments, $names, $organization);
+        $body = Markdown::ticket($ticket, $comments, $names, $organization, $internal);
         $fields = [
             'status' => $ticket['status'] ?? null, 'priority' => $ticket['priority'] ?? null, 'type' => $ticket['type'] ?? null,
             'requester_id' => $ticket['requester_id'] ?? null, 'assignee_id' => $ticket['assignee_id'] ?? null,

@@ -48,8 +48,9 @@ final class Markdown
      * @param  array<string|int,mixed>  $ticket
      * @param  array<int,array<string|int,mixed>>  $comments  Already filtered for visibility.
      * @param  array<int,string>  $names  user id → display name, for authors/requester/assignee.
+     * @param  bool  $descriptionFallback  Render `description` when no comment is left; false when private comments are hidden.
      */
-    public static function ticket(array $ticket, array $comments, array $names = [], ?string $organization = null): string
+    public static function ticket(array $ticket, array $comments, array $names = [], ?string $organization = null, bool $descriptionFallback = true): string
     {
         $lines = ['# '.self::oneLine((string) ($ticket['subject'] ?? 'Ticket #'.($ticket['id'] ?? ''))), ''];
         $facts = array_filter([
@@ -68,7 +69,9 @@ final class Markdown
         foreach ($facts as $label => $value) {
             $lines[] = '- **'.$label.':** '.self::oneLine((string) $value);
         }
-        if ($comments === []) {
+        // The description IS the first comment: with internal notes switched off and every comment filtered out,
+        // that first comment was private, so it must not reappear here.
+        if ($comments === [] && $descriptionFallback) {
             $lines[] = '';
             $lines[] = '## Description';
             $lines[] = '';

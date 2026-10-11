@@ -106,7 +106,7 @@ final readonly class ZendeskTools
             $records = [];
             foreach ($rows as $row) {
                 if (is_array($row) && $this->visible($row, $action, $installation)) {
-                    $records[] = $this->record($row, $action, $client->host());
+                    $records[] = $this->record($row, $action, $client->host(), (bool) data_get($installation->config_json, 'include_internal_notes', true));
                 }
             }
             $result = $this->envelope($action, $arguments, $data, $records);
@@ -286,7 +286,7 @@ final readonly class ZendeskTools
      * @param  array<string|int,mixed>  $row
      * @return array<string,mixed>
      */
-    private function record(array $row, string $action, string $host): array
+    private function record(array $row, string $action, string $host, bool $internalNotes): array
     {
         $type = $row['result_type'] ?? match (true) {
             str_contains($action, 'comment') => 'comment',
@@ -299,7 +299,9 @@ final readonly class ZendeskTools
             'comment' => self::COMMENT_FIELDS, 'article' => self::ARTICLE_FIELDS, 'organization' => self::ORGANIZATION_FIELDS, 'user' => self::USER_FIELDS, default => self::TICKET_FIELDS,
         };
         $fields = array_intersect_key($row, array_flip($allowed));
-        $body = Markdown::body($row + ['body' => $row['body'] ?? $row['description'] ?? '']);
+        // A ticket's `description` is its first comment, which may be private: it is returned only while internal notes are enabled.
+        $description = $type === 'ticket' && ! $internalNotes ? '' : ($row['description'] ?? '');
+        $body = Markdown::body($row + ['body' => $row['body'] ?? $description]);
         if ($type === 'user' || $type === 'organization') {
             $body = trim((string) ($row['details'] ?? '')."\n".(string) ($row['notes'] ?? ''));
         }

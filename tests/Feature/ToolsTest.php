@@ -337,4 +337,13 @@ final class ToolsTest extends TestCase
         $this->assertTrue($capped['data']['meta']['users_omitted']);
         $this->assertLessThanOrEqual(4000, strlen(json_encode($capped['data'])));
     }
+
+    public function test_get_ticket_does_not_return_the_description_when_internal_notes_are_off(): void
+    {
+        $this->fake(['*' => ['ticket' => ['id' => 1, 'subject' => 's', 'description' => 'PRIVATE-FIRST-NOTE']]]);
+        $off = $this->run_('get_ticket', ['id' => 1], null, ['include_internal_notes' => false]);
+        $this->assertStringNotContainsString('PRIVATE-FIRST-NOTE', json_encode($off));
+        $on = $this->run_('get_ticket', ['id' => 1]);
+        $this->assertSame('PRIVATE-FIRST-NOTE', $on['data']['records'][0]['body']);
+    }
 }

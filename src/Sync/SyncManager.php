@@ -261,9 +261,16 @@ final class SyncManager
         $enabled = match ($kind) {
             'user' => (bool) data_get($installation->config_json, 'customers.enabled', true),
             'organization' => (bool) data_get($installation->config_json, 'organizations.enabled', true),
+            'article' => (bool) data_get($installation->config_json, 'help_center.enabled', true),
+            'attachment' => (bool) data_get($installation->config_json, 'attachments.enabled', true),
             default => true,
         };
-        $state = $this->states($installation)->where('kind', $kind)->where('id', '>', (int) ($cp['refresh_cursor'] ?? 0))->orderBy('id')->first();
+        // Tickets, customers and organizations are re-imported here. Articles are re-listed by their own phase and
+        // attachments travel with their ticket, so those two kinds are visited only to retire copies of a switched-off type.
+        $reimported = in_array($kind, ['ticket', 'user', 'organization'], true);
+        $state = $reimported || ! $enabled
+            ? $this->states($installation)->where('kind', $kind)->where('id', '>', (int) ($cp['refresh_cursor'] ?? 0))->orderBy('id')->first()
+            : null;
         if ($state !== null && ! $enabled) {
             // A switched-off type is never re-imported, but a copy still indexed under a PREVIOUS project (the
             // installation was rebound) would stay readable there indefinitely: retire exactly those.
@@ -275,7 +282,7 @@ final class SyncManager
             return $cp;
         }
         if ($state === null) {
-            $next = ['ticket' => 'user', 'user' => 'organization'][$kind] ?? null;
+            $next = ['ticket' => 'user', 'user' => 'organization', 'organization' => 'article', 'article' => 'attachment'][$kind] ?? null;
             if ($next === null) {
                 $cp['refresh'] = false;
 
