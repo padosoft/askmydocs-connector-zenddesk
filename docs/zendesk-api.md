@@ -20,6 +20,7 @@ During development the endpoint shapes were checked against Zendesk's published 
 | `GET /incremental/organizations?start_time=` → `organizations`, `end_time`, `end_of_stream` | **Implemented from the documented design; not re-read** |
 | `GET /users/me` returns `200` with a null identity for anonymous callers | **Implemented from experience; not re-read** (the check is harmless if wrong: it only adds a stricter test) |
 | `GET /users/search?query=`, `/organizations/autocomplete?name=`, `/users/show_many?ids=`, `/organizations/show_many?ids=`, `/users/{id}/tickets/requested`, `/organizations/{id}/tickets` | **Implemented from the documented design; not re-read** |
+| `per_page` on the cursor-based user export (the package requests 100); `user_segment_ids` (plural) on Help Center articles | **Implemented from the documented design; not re-read** |
 | `include=users,organizations` side-loads on ticket show; `include=users` on comments, list tickets | **Implemented from the documented design; not re-read** |
 
 Each "not re-read" item is isolated in one place (`SyncManager` step methods or `ZendeskTools::request()`), so correcting a key after a live test is a one-line change, and the tests that pin it (`SyncTest`, `ToolsTest`) show exactly what to update.

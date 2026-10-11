@@ -32,7 +32,7 @@ Reads `GET /incremental/tickets/cursor` — first with `start_time`, then with t
 
 ### `users` (if `customers.enabled`)
 
-Cursor-based incremental user export. **End users** become profile documents. Anyone else, or a user reported inactive (Zendesk's representation of a deleted user), has their existing profile document removed.
+Cursor-based incremental user export, requested in pages of 100 so that a timeout or a `429` repeats little work. **End users** become profile documents. Anyone else, or a user reported inactive (Zendesk's representation of a deleted user), has their existing profile document removed.
 
 ### `organizations` (if `organizations.enabled`)
 
@@ -40,7 +40,7 @@ Time-based incremental organization export, following `end_time` until `end_of_s
 
 ### `articles` and `article_check` (if `help_center.enabled`)
 
-`articles` walks `GET /help_center/articles` (or the locale-scoped path when `help_center.locale` is set) with cursor pagination. Drafts delete their existing document. `article_check` then visits every known article the walk did **not** meet in this scan and asks Zendesk for its detail: success re-imports it, `404` confirms deletion, anything else is an error.
+`articles` walks `GET /help_center/articles` (or the locale-scoped path when `help_center.locale` is set) with cursor pagination. Drafts delete their existing document. `article_check` then visits every known article the walk did **not** meet in this scan and asks Zendesk for its detail: success re-imports it, `404` confirms deletion, anything else is an error. If `help_center.locale` is set and the article's own locale differs (compared case-insensitively, `_` and `-` equivalent), the article is outside the configured scope and its document is retired instead of re-imported — this is what happens to old-language articles after you change the locale.
 
 ### `customer_check` (history scans only)
 

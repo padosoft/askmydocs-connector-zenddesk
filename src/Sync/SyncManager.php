@@ -361,7 +361,9 @@ final class SyncManager
         if ($cp['stream_done'] ?? false) {
             return $this->transition($installation, $run, $cp, 'users');
         }
-        $query = ($cp['cursor'] ?? null) !== null ? ['cursor' => $cp['cursor']] : ['start_time' => (int) $cp['since']];
+        // A page is imported in one step, with an organization lookup per distinct organization: keep it small
+        // so a timeout or a 429 repeats little work instead of up to 1 000 users.
+        $query = (($cp['cursor'] ?? null) !== null ? ['cursor' => $cp['cursor']] : ['start_time' => (int) $cp['since']]) + ['per_page' => 100];
         $data = $client->get('/incremental/users/cursor', $query);
         foreach ((array) ($data['users'] ?? []) as $user) {
             if (! is_array($user) || ! isset($user['id'])) {
@@ -474,7 +476,14 @@ final class SyncManager
             if (! is_array($article) || ! isset($article['id'])) {
                 throw new \RuntimeException('Zendesk article detail is missing its identity.');
             }
-            $this->importer->article($installation, $run, $article);
+            $configured = self::locale($installation);
+            $actual = is_string($article['locale'] ?? null) ? str_replace('_', '-', strtolower($article['locale'])) : null;
+            if ($configured !== null && $actual !== null && $actual !== $configured) {
+                // The unscoped detail endpoint still finds it, but it is outside the configured locale: retire it.
+                $this->importer->delete($installation, $run, 'article', $state->remote_id);
+            } else {
+                $this->importer->article($installation, $run, $article);
+            }
         } catch (ZendeskApiException $exception) {
             if ($exception->status !== 404) {
                 throw $exception;

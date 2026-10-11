@@ -17,6 +17,7 @@ use Padosoft\AskMyDocsConnectorBase\Exceptions\ConnectorAuthException;
 use Padosoft\AskMyDocsConnectorBase\ProvenanceTier;
 use Padosoft\AskMyDocsConnectorBase\Support\CredentialField;
 use Padosoft\AskMyDocsConnectorZendesk\Support\RemoteId;
+use Padosoft\AskMyDocsConnectorZendesk\Support\SourceAccessPolicy;
 use Padosoft\AskMyDocsConnectorZendesk\Tests\TestCase;
 use Padosoft\AskMyDocsConnectorZendesk\ZendeskConnector;
 
@@ -176,6 +177,23 @@ final class ConnectorTest extends TestCase
         $this->assertSame(['zendesk:agents'], array_map(fn ($p) => $p->externalId, $acl->principals));
         $this->assertStringNotContainsString('anne@example.test', json_encode($acl->toArray()));
         $this->assertFalse($acl->isPublic());
+    }
+
+    public function test_article_acl_honours_plural_segments_and_never_reads_a_missing_field_as_public(): void
+    {
+        $ids = fn ($acl) => array_map(fn ($p) => $p->externalId, $acl->principals);
+        $plural = SourceAccessPolicy::article(['user_segment_id' => null, 'user_segment_ids' => [3, '4']]);
+        $this->assertFalse($plural->isPublic());
+        $this->assertSame(['zendesk:user_segment:3', 'zendesk:user_segment:4'], $ids($plural));
+        $both = SourceAccessPolicy::article(['user_segment_id' => 3, 'user_segment_ids' => [3, 9]]);
+        $this->assertSame(['zendesk:user_segment:3', 'zendesk:user_segment:9'], $ids($both));
+        $this->assertTrue(SourceAccessPolicy::article(['user_segment_id' => null, 'user_segment_ids' => []])->isPublic());
+        $this->assertTrue(SourceAccessPolicy::article(['user_segment_id' => null])->isPublic());
+        foreach ([['title' => 'no visibility fields'], ['user_segment_ids' => 'oops'], ['user_segment_ids' => [3, 'x']]] as $payload) {
+            $unknown = SourceAccessPolicy::article($payload);
+            $this->assertFalse($unknown->complete, json_encode($payload));
+            $this->assertFalse($unknown->isPublic(), json_encode($payload));
+        }
     }
 
     public function test_acl_distinguishes_unknown_from_nobody_and_never_swallows_auth_failures(): void

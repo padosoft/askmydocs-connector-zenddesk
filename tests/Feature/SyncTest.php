@@ -372,6 +372,47 @@ final class SyncTest extends TestCase
         $this->assertStringNotContainsString('sensitive@example.com', json_encode($attachment['metadata']));
     }
 
+    public function test_the_user_export_is_requested_in_small_pages(): void
+    {
+        $this->zendesk();
+        $this->finish(app(SyncManager::class)->start($this->authorized(), true));
+        Http::assertSent(fn ($r) => str_contains($r->url(), '/incremental/users/cursor') && ($r['per_page'] ?? null) === 100);
+    }
+
+    public function test_an_article_outside_the_configured_locale_is_retired_not_reimported(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame(1, SourceState::where('kind', 'article')->count());
+
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'help_center' => ['locale' => 'it']]]);
+        // The locale-scoped list is empty; the unscoped detail still finds the English article.
+        $this->zendesk([
+            '/help_center/it/articles' => ['articles' => [], 'meta' => ['has_more' => false]],
+            '/help_center/articles/7' => ['article' => ['id' => 7, 'title' => 'Reset your password', 'body' => '<p>Click</p>', 'draft' => false, 'locale' => 'en_us', 'user_segment_id' => null]],
+        ]);
+        $this->finish(app(SyncManager::class)->start($installation));
+
+        $this->assertContains(['tenant-a', $installation->id.':article:7'], $this->ingestion->deleted);
+        $this->assertSame(0, SourceState::where('kind', 'article')->count());
+    }
+
+    public function test_an_article_in_the_configured_locale_is_still_reimported_by_the_check(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'help_center' => ['locale' => 'en-us']]]);
+        $this->zendesk([
+            '/help_center/en-us/articles' => ['articles' => [], 'meta' => ['has_more' => false]],
+            '/help_center/articles/7' => ['article' => ['id' => 7, 'title' => 'Reset your password', 'body' => '<p>Click</p>', 'draft' => false, 'locale' => 'en_US', 'user_segment_id' => null]],
+        ]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame([], array_filter($this->ingestion->deleted, fn ($row) => str_contains($row[1], ':article:')));
+        $this->assertSame(1, SourceState::where('kind', 'article')->count());
+    }
+
     public function test_titles_are_redacted_like_bodies(): void
     {
         $ticket = ['id' => 1, 'subject' => 'Refund for sensitive@example.com', 'status' => 'open', 'requester_id' => 10, 'created_at' => '2026-10-01T10:00:00Z', 'updated_at' => '2026-10-02T10:00:00Z'];

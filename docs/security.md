@@ -21,7 +21,7 @@ The connector reads data written by **customers** (ticket text, attachment conte
 
 `UrlPolicy` runs before any socket is opened:
 
-1. **API calls** — scheme `https`, port 443, no userinfo or fragment, host exactly `{label}.zendesk.com`, path restricted to `^/[a-z0-9_/]+$` (no dots, queries or traversal).
+1. **API calls** — scheme `https`, port 443, no userinfo or fragment, host exactly `{label}.zendesk.com`, path restricted to `^/[a-z0-9_/-]+$` with no `//` (lowercase letters, digits, underscore, hyphen for locales such as `en-us`, and slashes: no dots, queries or traversal).
 2. **Attachments** — the host must match `attachments.allowed_hosts`; **every redirect hop** (max 3, `https` only) is re-validated; redirects are never followed automatically.
 3. **DNS pinning** — the host is resolved, every A/AAAA record must be public (private and reserved ranges are refused), and the connection is pinned to those addresses with `CURLOPT_RESOLVE`, removing the time-of-check/time-of-use gap. `http.resolve_dns=false` exists for faked HTTP in tests; never set it in production.
 4. **Bounded responses** — JSON capped at `http.max_json_bytes`, attachments at the configured size, both streamed and checked incrementally, so a hostile `Content-Length` cannot exhaust memory.
@@ -59,7 +59,8 @@ Attachments are customer-supplied files, the highest-risk input the package touc
 | Ticket, customer, organization | group `zendesk:agents` |
 | Attachment | inherits from its ticket |
 | Article, no user segment | `anyone` |
-| Article with segment | group `zendesk:user_segment:{id}` |
+| Article with `user_segment_id` and/or a non-empty `user_segment_ids` | one group `zendesk:user_segment:{id}` per segment (the plural list wins even when the singular field is null) |
+| Article whose payload carries neither field, or a malformed one | `SourceAccess::unknown()` — a missing field is never read as a public share |
 
 The requester is **not** reported as a reader of their ticket: the indexed document contains internal notes the requester can never see. If Zendesk cannot answer (5xx, malformed), `SourceAccess::unknown()` is returned — never an empty allow-list, because "nobody" and "we could not find out" must stay distinguishable. 401/403 are raised as `ConnectorAuthException`, never swallowed.
 

@@ -71,7 +71,8 @@ final class ZendeskClient
      */
     public function get(string $path, array $query = []): array
     {
-        if (preg_match('~^/[a-z0-9_/]+$~D', $path) !== 1) {
+        // Lowercase letters, digits, underscore, hyphen (locales such as en-us) and slashes: no dots, queries or traversal.
+        if (preg_match('~^/[a-z0-9_/-]+$~D', $path) !== 1 || str_contains($path, '//')) {
             throw new \InvalidArgumentException('Invalid Zendesk API path.');
         }
         $url = 'https://'.$this->host().'/api/v2'.$path;

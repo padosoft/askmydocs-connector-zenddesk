@@ -81,6 +81,13 @@ final class HttpClientTest extends TestCase
         }
     }
 
+    public function test_locale_scoped_paths_with_a_hyphen_are_accepted(): void
+    {
+        Http::fake(['*' => fn () => Http::response(['articles' => []])]);
+        $this->assertSame(['articles' => []], (new ZendeskClient('example', 'tok', 'oauth_token'))->get('/help_center/en-us/articles'));
+        Http::assertSent(fn ($r) => $r->url() === 'https://example.zendesk.com/api/v2/help_center/en-us/articles');
+    }
+
     public function test_5xx_is_retried_and_counted_then_succeeds(): void
     {
         Http::fake(['*' => Http::sequence()->push([], 503)->push(['id' => 1])]);
