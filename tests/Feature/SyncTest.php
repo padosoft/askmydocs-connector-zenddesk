@@ -1,0 +1,344 @@
+<?php
+
+namespace Padosoft\AskMyDocsConnectorZendesk\Tests\Feature;
+
+use Illuminate\Http\Client\Factory;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+use Padosoft\AskMyDocsConnectorBase\Access\SourceAccess;
+use Padosoft\AskMyDocsConnectorBase\Support\TenantContext;
+use Padosoft\AskMyDocsConnectorZendesk\Exceptions\ZendeskApiException;
+use Padosoft\AskMyDocsConnectorZendesk\Sync\ProcessSyncBatch;
+use Padosoft\AskMyDocsConnectorZendesk\Sync\SourceState;
+use Padosoft\AskMyDocsConnectorZendesk\Sync\SyncManager;
+use Padosoft\AskMyDocsConnectorZendesk\Tests\TestCase;
+
+final class SyncTest extends TestCase
+{
+    use FakesZendesk;
+
+    public function test_full_scan_imports_every_kind_once_and_is_idempotent(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        $this->assertSame(90, $run->checkpoint['window_days']);
+        $this->assertNull($installation->fresh()->last_sync_at);
+        $this->finish($run);
+
+        $this->assertEqualsCanonicalizing(['ticket', 'user', 'organization', 'article'], $this->ingestion->kinds());
+        $this->assertSame('completed', $run->fresh()->status);
+        $this->assertNotNull($installation->fresh()->last_sync_at);
+        $this->assertSame('support', $this->ingestion->documents[0]['projectKey']);
+
+        $ticket = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'ticket');
+        $body = Storage::disk('local')->get($ticket['relativePath']);
+        $this->assertStringContainsString('Internal note', $body);
+        $this->assertStringContainsString('Public reply: unplug it', $body);
+        $this->assertStringContainsString('[redacted]', $body);
+        $this->assertStringNotContainsString('sensitive@example.com', $body);
+        $this->assertStringContainsString('Anne Richard (#10)', $body);
+        $this->assertStringContainsString('Acme Corp', $body);
+        $this->assertSame($installation->id.':ticket:1', $ticket['metadata']['zendesk_remote_id']);
+        $this->assertSame('https://example.zendesk.com/agent/tickets/1', $ticket['metadata']['source_url']);
+
+        $count = count($this->ingestion->documents);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertCount($count, $this->ingestion->documents, 'unchanged content must not be delivered again');
+    }
+
+    public function test_only_end_users_become_customer_documents_and_drafts_are_never_imported(): void
+    {
+        $this->zendesk();
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        $titles = array_column($this->ingestion->documents, 'title');
+        $this->assertContains('Anne Richard', $titles);
+        $this->assertNotContains('Sam Agent', $titles);
+        $this->assertNotContains('Unreleased draft', $titles);
+    }
+
+    public function test_every_document_carries_a_reported_source_acl(): void
+    {
+        $this->zendesk();
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        foreach ($this->ingestion->documents as $document) {
+            $this->assertNotNull(SourceAccess::fromArray($document['metadata'][SourceAccess::METADATA_KEY] ?? null), $document['title']);
+        }
+        $article = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'article');
+        $this->assertTrue(SourceAccess::fromArray($article['metadata'][SourceAccess::METADATA_KEY])->isPublic());
+        $ticket = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'ticket');
+        $this->assertFalse(SourceAccess::fromArray($ticket['metadata'][SourceAccess::METADATA_KEY])->isPublic());
+    }
+
+    public function test_internal_notes_can_be_excluded(): void
+    {
+        $this->zendesk();
+        $this->finish(app(SyncManager::class)->start($this->authorized(['include_internal_notes' => false])));
+        $ticket = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'ticket');
+        $body = Storage::disk('local')->get($ticket['relativePath']);
+        $this->assertStringNotContainsString('escalate to facilities', $body);
+        $this->assertStringContainsString('Public reply', $body);
+    }
+
+    public function test_customers_organizations_and_help_center_can_be_switched_off(): void
+    {
+        $this->zendesk();
+        $this->finish(app(SyncManager::class)->start($this->authorized(['customers' => ['enabled' => false], 'organizations' => ['enabled' => false], 'help_center' => ['enabled' => false]])));
+        $this->assertSame(['ticket'], $this->ingestion->kinds());
+    }
+
+    public function test_changing_a_content_setting_refreshes_already_imported_tickets(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'include_internal_notes' => false]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $path = SourceState::where('kind', 'ticket')->firstOrFail()->relative_path;
+        $this->assertStringNotContainsString('escalate to facilities', Storage::disk('local')->get($path));
+    }
+
+    public function test_a_deleted_ticket_in_the_stream_removes_its_documents_and_attachments(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->zendesk(['/incremental/tickets/cursor' => ['tickets' => [['id' => 1, 'status' => 'deleted']], 'after_cursor' => 'cur-2', 'end_of_stream' => true]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertContains(['tenant-a', $installation->id.':ticket:1'], $this->ingestion->deleted);
+        $this->assertSame(0, SourceState::where('kind', 'ticket')->count());
+    }
+
+    public function test_a_ticket_404_is_not_deletion_evidence(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->zendesk(['/tickets/1' => 404]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame([], array_filter($this->ingestion->deleted, fn ($row) => str_contains($row[1], ':ticket:')));
+        $this->assertSame(1, SourceState::where('kind', 'ticket')->count());
+    }
+
+    public function test_article_detail_404_confirms_deletion_and_a_draft_removes_the_document(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        // Article 7 vanishes from the list; its detail answers 404.
+        $this->zendesk(['/help_center/articles' => ['articles' => [], 'meta' => ['has_more' => false]], '/help_center/articles/7' => 404]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertContains(['tenant-a', $installation->id.':article:7'], $this->ingestion->deleted);
+        $this->assertSame(0, SourceState::where('kind', 'article')->count());
+    }
+
+    public function test_absence_from_a_list_alone_does_not_delete_an_article(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->zendesk(['/help_center/articles' => ['articles' => [], 'meta' => ['has_more' => false]]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame([], array_filter($this->ingestion->deleted, fn ($row) => str_contains($row[1], ':article:')));
+    }
+
+    public function test_history_mode_deletes_customers_the_full_export_no_longer_returns(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation, true));
+        $this->assertSame(1, SourceState::where('kind', 'user')->count());
+        $this->zendesk(['/incremental/users/cursor' => ['users' => [], 'after_cursor' => 'u2', 'end_of_stream' => true], '/users/show_many' => ['users' => []],
+            '/incremental/organizations' => ['organizations' => [], 'end_time' => 1760000000, 'end_of_stream' => true], '/organizations/show_many' => ['organizations' => []]]);
+        $this->finish(app(SyncManager::class)->start($installation, true));
+        $this->assertContains(['tenant-a', $installation->id.':user:10'], $this->ingestion->deleted);
+        $this->assertContains(['tenant-a', $installation->id.':organization:5'], $this->ingestion->deleted);
+    }
+
+    public function test_a_customer_promoted_to_agent_loses_its_profile_document(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->zendesk(['/incremental/users/cursor' => ['users' => [['id' => 10, 'name' => 'Anne Richard', 'role' => 'agent']], 'after_cursor' => 'u2', 'end_of_stream' => true]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertContains(['tenant-a', $installation->id.':user:10'], $this->ingestion->deleted);
+    }
+
+    public function test_a_deleted_inactive_user_loses_its_profile_document(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->zendesk(['/incremental/users/cursor' => ['users' => [['id' => 10, 'name' => 'Anne Richard', 'role' => 'end-user', 'active' => false]], 'after_cursor' => 'u2', 'end_of_stream' => true]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertContains(['tenant-a', $installation->id.':user:10'], $this->ingestion->deleted);
+        $this->assertSame(0, SourceState::where('kind', 'user')->count());
+    }
+
+    private function withAttachment(string $url, string $name = 'info.txt', string $type = 'text/plain'): array
+    {
+        return ['/tickets/1/comments' => ['comments' => [['id' => 100, 'author_id' => 10, 'public' => true, 'created_at' => '2026-10-01T10:00:00Z', 'plain_body' => 'See file',
+            'attachments' => [['id' => 55, 'file_name' => $name, 'content_type' => $type, 'size' => 11, 'content_url' => $url]]]], 'meta' => ['has_more' => false]]];
+    }
+
+    public function test_attachment_download_sends_credentials_only_to_the_account_host(): void
+    {
+        $this->zendesk($this->withAttachment('https://example.zendesk.com/attachments/token/abc/?name=info.txt'), function ($request) {
+            return match (parse_url($request->url(), PHP_URL_HOST)) {
+                'example.zendesk.com' => str_contains($request->url(), '/attachments/') ? Http::response('', 302, ['Location' => 'https://p1.zdusercontent.com/files/info.txt?signature=SECRET']) : null,
+                'p1.zdusercontent.com' => Http::response('hello world', 200, ['Content-Type' => 'text/plain']),
+                default => null,
+            };
+        });
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+
+        Http::assertSent(fn ($r) => str_contains($r->url(), '/attachments/token/abc') && $r->hasHeader('Authorization'));
+        Http::assertSent(fn ($r) => str_contains($r->url(), 'zdusercontent.com') && ! $r->hasHeader('Authorization'));
+        $attachment = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'attachment');
+        $this->assertSame('hello world', Storage::disk('local')->get($attachment['relativePath']));
+        $this->assertStringNotContainsString('SECRET', json_encode($this->ingestion->documents));
+        $this->assertSame('inherited', $attachment['metadata']['_source_access']['inherits_from_parent'] ? 'inherited' : 'own');
+    }
+
+    public function test_attachment_with_a_disallowed_host_or_a_mismatched_type_is_refused(): void
+    {
+        $this->zendesk($this->withAttachment('https://evil.example/file.txt'));
+        $run = app(SyncManager::class)->start($this->authorized());
+        try {
+            $this->finish($run);
+            $this->fail('A foreign attachment host must stop the scan.');
+        } catch (\InvalidArgumentException $exception) {
+            $this->assertStringContainsString('attachment host is not allowed', $exception->getMessage());
+        }
+        $this->assertSame('failed', $run->fresh()->status);
+    }
+
+    public function test_attachment_bytes_must_match_the_declared_type(): void
+    {
+        $this->zendesk($this->withAttachment('https://example.zendesk.com/a/fake.pdf', 'fake.pdf', 'application/pdf'), fn ($r) => str_contains($r->url(), '/a/fake.pdf') ? Http::response('<html>not a pdf</html>') : null);
+        $run = app(SyncManager::class)->start($this->authorized());
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('MIME does not match');
+        $this->finish($run);
+    }
+
+    public function test_flagged_deleted_or_oversized_attachments_are_skipped_not_downloaded(): void
+    {
+        $comments = ['/tickets/1/comments' => ['comments' => [['id' => 100, 'author_id' => 10, 'public' => true, 'created_at' => '2026-10-01T10:00:00Z', 'plain_body' => 'files', 'attachments' => [
+            ['id' => 1, 'file_name' => 'a.txt', 'content_type' => 'text/plain', 'size' => 5, 'malware_scan_result' => 'malware_found', 'content_url' => 'https://example.zendesk.com/a1'],
+            ['id' => 2, 'file_name' => 'b.exe', 'content_type' => 'application/octet-stream', 'size' => 5, 'content_url' => 'https://example.zendesk.com/a2'],
+            ['id' => 3, 'file_name' => 'c.txt', 'content_type' => 'text/plain', 'size' => 999999999, 'content_url' => 'https://example.zendesk.com/a3'],
+        ]]], 'meta' => ['has_more' => false]]];
+        $this->zendesk($comments);
+        $run = app(SyncManager::class)->start($this->authorized());
+        $this->finish($run);
+        Http::assertNotSent(fn ($r) => in_array(parse_url($r->url(), PHP_URL_PATH), ['/a1', '/a2', '/a3'], true));
+        $this->assertSame(3, $run->fresh()->counts['attachments_skipped']);
+    }
+
+    public function test_rate_limit_defers_the_batch_by_retry_after_and_keeps_the_checkpoint(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        Http::swap(new Factory);
+        Http::fake(['*' => Http::response([], 429, ['Retry-After' => '34'])]);
+        $this->assertSame(34, app(SyncManager::class)->batch($run->id));
+        $this->assertSame('queued', $run->fresh()->status);
+        $this->assertSame('tickets', $run->fresh()->checkpoint['phase']);
+        $this->assertNull($run->fresh()->checkpoint['cursor']);
+        Http::assertSentCount(1);
+    }
+
+    public function test_a_failed_scan_resumes_from_its_checkpoint_without_an_early_watermark(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        $this->zendesk(['/incremental/tickets/cursor' => 503]);
+        try {
+            app(SyncManager::class)->batch($run->id);
+            $this->fail('503 must surface.');
+        } catch (ZendeskApiException $exception) {
+            $this->assertSame(503, $exception->status);
+        }
+        $this->assertNull($installation->fresh()->last_sync_at);
+        $this->assertSame('failed', $run->fresh()->status);
+        $this->assertSame('errored', $installation->fresh()->status);
+        $this->zendesk();
+        $resumed = app(SyncManager::class)->start($installation);
+        $this->assertSame($run->id, $resumed->id);
+        $this->finish($resumed);
+        $this->assertSame('active', $installation->fresh()->status);
+    }
+
+    public function test_an_export_cursor_that_does_not_advance_fails_loudly(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        $cp = $run->checkpoint;
+        $cp['cursor'] = 'same';
+        $run->checkpoint = $cp;
+        $run->save();
+        $this->zendesk(['/incremental/tickets/cursor' => ['tickets' => [], 'after_cursor' => 'same', 'end_of_stream' => false]]);
+        $this->expectExceptionMessage('did not advance');
+        app(SyncManager::class)->batch($run->id);
+    }
+
+    public function test_the_export_start_time_is_never_too_recent_and_history_starts_at_the_epoch(): void
+    {
+        $installation = $this->authorized(['date_window_days' => 45]);
+        $manager = app(SyncManager::class);
+        $history = $manager->start($installation, true);
+        $this->assertSame(0, $history->checkpoint['since']);
+        $this->assertSame($history->id, $manager->start($installation, true)->id);
+        $this->assertSame(45, $installation->fresh()->config_json['date_window_days']);
+        $this->assertLessThanOrEqual(now()->subSeconds(60)->getTimestamp(), $history->checkpoint['initial_since']);
+    }
+
+    public function test_a_second_batch_for_the_same_installation_is_deferred_by_the_lock(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        $lock = Cache::lock('zendesk-sync:tenant-a:'.$installation->id, 660);
+        $lock->get();
+        $this->assertSame(30, app(SyncManager::class)->batch($run->id));
+        $lock->release();
+    }
+
+    public function test_pausing_the_installation_mid_batch_cancels_the_continuation(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        Http::swap(new Factory);
+        Http::fake(function () use ($installation) {
+            $installation->update(['status' => 'paused']);
+
+            return Http::response(['tickets' => [], 'after_cursor' => 'x', 'end_of_stream' => false]);
+        });
+        $this->assertNull(app(SyncManager::class)->batch($run->id));
+        $this->assertSame('cancelled', $run->fresh()->status);
+        $this->assertNull($installation->fresh()->last_sync_at);
+    }
+
+    public function test_a_worker_timeout_keeps_the_checkpoint_and_never_persists_the_exception_body(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation, true);
+        $checkpoint = $run->checkpoint;
+        (new ProcessSyncBatch($run->id, 'tenant-a'))->failed(new \RuntimeException('https://x.zdusercontent.com/?signature=secret-token'));
+        $this->assertSame('failed', $run->fresh()->status);
+        $this->assertSame($checkpoint, $run->fresh()->checkpoint);
+        $this->assertStringNotContainsString('secret-token', (string) $run->fresh()->error);
+        $this->assertSame('errored', $installation->fresh()->status);
+        $this->assertSame($run->id, app(SyncManager::class)->start($installation, true)->id);
+    }
+
+    public function test_a_tenant_mismatch_is_rejected_before_any_request(): void
+    {
+        $installation = $this->authorized();
+        app(TenantContext::class)->set('tenant-b');
+        $this->expectException(\RuntimeException::class);
+        app(SyncManager::class)->client($installation);
+    }
+}
