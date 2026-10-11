@@ -35,6 +35,8 @@ All notable changes to `padosoft/askmydocs-connector-zendesk` are documented her
 
 - Validated with simulated HTTP only; no live-account test has been run. [docs/zendesk-api.md](docs/zendesk-api.md) lists which endpoint shapes were confirmed against the published reference and which still need a sandbox check.
 - OAuth access tokens are not refreshed by the package.
+- Narrowing or replacing `sync.ticket_support_type_scope` (for example `all` → `agent`) does not retire tickets that fall outside the new scope: ticket reconciliation exists only for customers and organizations. Widening the scope is handled (the ticket window restarts).
+- If a project is rebound while customers or organizations are switched off, their copies in the previous project are retired together with their source state; enabling the type later back-fills only the configured window (`date_window_days`), so records older than that need a *Fetch all* scan.
 - Custom host-mapped domains are not supported; use the `*.zendesk.com` subdomain.
 - Zendesk Guide content other than articles (community posts, custom objects, chat transcripts, voice recordings) is not imported.
 
