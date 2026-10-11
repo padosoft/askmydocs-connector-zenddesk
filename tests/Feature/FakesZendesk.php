@@ -63,7 +63,7 @@ trait FakesZendesk
                     ['id' => 8, 'title' => 'Unreleased draft', 'body' => '<p>secret plan</p>', 'draft' => true, 'locale' => 'en-us', 'updated_at' => '2026-10-02T10:00:00Z'],
                 ], 'meta' => ['has_more' => false, 'after_cursor' => null]],
                 '/help_center/articles/7' => ['article' => ['id' => 7, 'title' => 'Reset your password', 'body' => '<p>Click</p>', 'draft' => false, 'user_segment_id' => null]],
-                '/users/me' => ['user' => ['id' => 11, 'role' => 'agent', 'name' => 'Sam Agent']],
+                '/users/me' => ['user' => ['id' => 11, 'role' => 'admin', 'name' => 'Sam Admin']],
                 default => throw new \RuntimeException('Unexpected fixture path: '.$path),
             });
         });

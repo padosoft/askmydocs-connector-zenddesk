@@ -160,7 +160,7 @@ Zendesk recommends OAuth over API tokens because a token can be scoped. Create a
 
 ### What the form checks
 
-Saving the form calls `GET /api/v2/users/me` **before** anything reaches the vault. It must return a real user with the role `agent` or `admin`: Zendesk answers `200` with a null identity to anonymous callers, and an end-user token cannot read tickets, so both are rejected. A failed re-configuration leaves the previous secret untouched.
+Saving the form calls `GET /api/v2/users/me` **before** anything reaches the vault. It must return a real user with the role `admin`: Zendesk answers `200` with a null identity to anonymous callers, and the incremental export APIs the import uses are admin-only, so anonymous, end-user and agent credentials are rejected. A failed re-configuration leaves the previous secret untouched.
 
 ## Activation inside AskMyDocs
 
@@ -328,7 +328,7 @@ The suite covers credential verification and state tokens, both auth modes, full
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Install says *Zendesk did not recognise the credentials* | `users/me` returned an anonymous identity: wrong token, wrong subdomain, or token access disabled | Re-check the token, the agent email and **Token access** in Admin Center |
-| *Use an agent or admin account* | The email belongs to an end user | Pair the token with an agent email |
+| *Use an admin account* | The email belongs to an agent or end user | Pair the token with an admin email |
 | `Zendesk rejected the credentials` (401) in health | Token deleted/rotated, or OAuth token expired | Create a new token and re-enter credentials |
 | `The Zendesk account does not permit this operation` (403) | The agent's role cannot read that resource (for example users or Help Center) | Grant the role access, or switch the content type off |
 | Scan stays *queued* | No worker on the `zendesk` queue, or a `sync` queue | Run the worker command above; use an async queue |

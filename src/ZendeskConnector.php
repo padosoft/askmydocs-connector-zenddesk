@@ -52,8 +52,8 @@ final class ZendeskConnector extends BaseConnector implements DeclaresProvenance
             (new CredentialField('auth_mode', 'Authentication', 'select', 'connection', required: true, default: ZendeskClient::AUTH_API_TOKEN,
                 options: [ZendeskClient::AUTH_API_TOKEN => 'API token (agent email + token)', ZendeskClient::AUTH_OAUTH_TOKEN => 'OAuth access token'],
                 help: 'API tokens are created in Admin Center → Apps and integrations → APIs. An OAuth access token must carry at least the read scope.'))->toArray(),
-            (new CredentialField('email', 'Agent email', 'text', 'connection', showIf: ['field' => 'auth_mode', 'equals' => ZendeskClient::AUTH_API_TOKEN],
-                help: 'The agent or admin whose identity the API token acts as.'))->toArray(),
+            (new CredentialField('email', 'Admin email', 'text', 'connection', showIf: ['field' => 'auth_mode', 'equals' => ZendeskClient::AUTH_API_TOKEN],
+                help: 'The admin whose identity the API token acts as (incremental exports are admin-only).'))->toArray(),
             (new CredentialField('api_token', 'API token or access token', 'password', 'secret', required: true, secret: true))->toArray(),
         ];
     }
@@ -123,8 +123,10 @@ final class ZendeskConnector extends BaseConnector implements DeclaresProvenance
         if (! is_array($me) || (int) ($me['id'] ?? 0) < 1) {
             throw new ConnectorAuthException('Zendesk did not recognise the credentials.');
         }
-        if (! in_array($me['role'] ?? '', ['agent', 'admin'], true)) {
-            throw new ConnectorAuthException('Use an agent or admin account: end-user credentials cannot read tickets.');
+        // The import walks the incremental export APIs, which Zendesk restricts to admins: an agent would be
+        // accepted here and then fail every scan with a 403.
+        if (($me['role'] ?? '') !== 'admin') {
+            throw new ConnectorAuthException('Use an admin account: Zendesk restricts the incremental export APIs the import relies on to admins.');
         }
     }
 

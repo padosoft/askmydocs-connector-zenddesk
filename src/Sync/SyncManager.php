@@ -96,21 +96,34 @@ final class SyncManager
             }
             $window = max(1, min(36500, (int) data_get($installation->config_json, 'date_window_days', 90)));
             $since = $history ? Carbon::create(1970, 1, 1, 0, 0, 0, 'UTC') : Carbon::now('UTC')->subDays($window);
-            $previous = $this->runs($installation)->where('status', 'completed')->latest('scan_started_at')->first();
+            $windowStart = $since->copy();
+            // Ties on the start time (two scans within one second) are broken by id, so "previous" is always the newest.
+            $previous = $this->runs($installation)->where('status', 'completed')->latest('scan_started_at')->latest('id')->first();
             $projection = self::projection($installation);
             $refresh = $previous !== null && ($previous->checkpoint['projection_hash'] ?? null) !== $projection;
             if (! $history && $previous !== null && (int) ($previous->checkpoint['window_days'] ?? 0) >= $window) {
                 $since = $since->max(Carbon::parse($previous->scan_started_at)->subSeconds((int) config('connector-zendesk.sync.overlap_seconds', 120)));
             }
             // Zendesk rejects an export start_time that is too close to "now".
-            $since = $since->min(Carbon::now('UTC')->subSeconds(max(60, (int) config('connector-zendesk.sync.export_min_age_seconds', 90))));
+            $newest = Carbon::now('UTC')->subSeconds(max(60, (int) config('connector-zendesk.sync.export_min_age_seconds', 90)));
+            $since = $since->min($newest);
+            // A content type that was off during the previous completed scan has never been exported for this
+            // window: its export must cover the whole window, not only what changed since that scan.
+            $content = [
+                'customers' => (bool) data_get($installation->config_json, 'customers.enabled', true),
+                'organizations' => (bool) data_get($installation->config_json, 'organizations.enabled', true),
+            ];
+            $before = (array) ($previous?->checkpoint['content'] ?? []);
+            $usersSince = $content['customers'] && ! ($before['customers'] ?? false) ? $windowStart->min($newest) : $since;
+            $organizationsSince = $content['organizations'] && ! ($before['organizations'] ?? false) ? $windowStart->min($newest) : $since;
             $dispatch = true;
 
             return SyncRun::query()->create([
                 'tenant_id' => $installation->tenant_id, 'installation_id' => $installation->id, 'mode' => $mode,
                 'status' => 'queued', 'scan_started_at' => now(), 'counts' => [],
                 'checkpoint' => [
-                    'phase' => 'tickets', 'since' => $since->getTimestamp(), 'initial_since' => $since->getTimestamp(), 'cursor' => null, 'pending' => [], 'pages' => 0,
+                    'phase' => 'tickets', 'since' => $since->getTimestamp(), 'initial_since' => $since->getTimestamp(),
+                    'users_since' => $usersSince->getTimestamp(), 'org_since' => $organizationsSince->getTimestamp(), 'content' => $content, 'cursor' => null, 'pending' => [], 'pages' => 0,
                     'window_days' => $history ? 36500 : $window, 'projection_hash' => $projection, 'refresh' => $refresh, 'refresh_kind' => 'ticket', 'refresh_cursor' => 0,
                 ],
             ]);
@@ -369,7 +382,7 @@ final class SyncManager
         }
         // A page is imported in one step, with an organization lookup per distinct organization: keep it small
         // so a timeout or a 429 repeats little work instead of up to 1 000 users.
-        $query = (($cp['cursor'] ?? null) !== null ? ['cursor' => $cp['cursor']] : ['start_time' => (int) $cp['since']]) + ['per_page' => 100];
+        $query = (($cp['cursor'] ?? null) !== null ? ['cursor' => $cp['cursor']] : ['start_time' => (int) ($cp['users_since'] ?? $cp['since'])]) + ['per_page' => 100];
         $data = $client->get('/incremental/users/cursor', $query);
         foreach ((array) ($data['users'] ?? []) as $user) {
             if (! is_array($user) || ! isset($user['id'])) {
@@ -420,7 +433,10 @@ final class SyncManager
             }
         }
         $endTime = (int) ($data['end_time'] ?? 0);
-        $cp['stream_done'] = (bool) ($data['end_of_stream'] ?? false) || $rows === [] || count($rows) < 1000 || $endTime === 0;
+        // Zendesk documents that a short or empty page does not mean the export is complete: only end_of_stream
+        // does. The row count is a fallback for a response that carries no such flag at all.
+        $flag = $data['end_of_stream'] ?? null;
+        $cp['stream_done'] = $flag === true || ($flag === null && ($rows === [] || count($rows) < 1000)) || $endTime === 0;
         if (! $cp['stream_done'] && $endTime <= $start) {
             throw new \RuntimeException('Zendesk organization export cannot advance at the timestamp boundary; import remains incomplete.');
         }

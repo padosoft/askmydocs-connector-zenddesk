@@ -99,6 +99,20 @@ final class ConnectorTest extends TestCase
         }
     }
 
+    public function test_a_plain_agent_is_refused_because_incremental_exports_are_admin_only(): void
+    {
+        $installation = $this->authorized();
+        $this->zendesk(['/users/me' => ['user' => ['id' => 5, 'role' => 'agent', 'name' => 'Plain Agent']]]);
+        try {
+            $this->connector()->handleOAuthCallback($installation->id, Request::create('/', 'POST', ['state' => $this->state($installation->id), 'api_token' => 'agent-token']));
+            $this->fail('An agent would be accepted here and then fail every scan with a 403.');
+        } catch (ConnectorAuthException $exception) {
+            $this->assertStringContainsString('admin', $exception->getMessage());
+            $this->assertSame('secret-token', app(OAuthCredentialVault::class)->getAccessToken($installation->id));
+        }
+        $this->assertSame('errored', $this->connector()->health($installation->id)->state);
+    }
+
     public function test_a_401_from_zendesk_becomes_an_auth_error_without_the_upstream_body(): void
     {
         $installation = $this->authorized();

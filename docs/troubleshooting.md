@@ -18,7 +18,7 @@ or directly: `SELECT id, mode, status, error, checkpoint FROM zendesk_sync_runs 
 |---|---|---|
 | *Enter the account subdomain…* | The value is not a single label (`a.b`, a path, a custom domain) | Use `company` / `company.zendesk.com` |
 | *Zendesk did not recognise the credentials* | Wrong token or email, **Token access** off, wrong subdomain | Re-create the token; check the agent email |
-| *Use an agent or admin account…* | Token paired with an end-user email | Use an agent |
+| *Use an admin account…* | Token paired with a non-admin email (incremental exports are admin-only) | Use an admin |
 | Health shows `Zendesk rejected the credentials` | Token deleted, rotated, or OAuth token expired | Re-enter credentials |
 | `permission_denied` for users or articles | The agent's role cannot view them | Adjust the role, or disable that content type |
 | Scan stuck on `queued` | No worker for queue `zendesk`; or queue driver is `sync` | `php artisan queue:work zendesk --queue=zendesk --timeout=600 --tries=3` |

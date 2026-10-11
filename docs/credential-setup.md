@@ -42,7 +42,7 @@ The package sends `Authorization: Bearer {token}`. It does **not** refresh token
 On save the connector calls `GET /api/v2/users/me` and requires:
 
 1. HTTP 200 with a non-null user `id` — an anonymous caller also gets 200, with a null identity, so the status code alone proves nothing;
-2. `role` of `agent` or `admin` — an end-user credential cannot read tickets.
+2. `role` of `admin` — Zendesk restricts the incremental export APIs the import relies on to administrators, so an agent or end-user credential would verify fine and then fail on the first scan.
 
 Failure leaves the previous secret in place and shows a message that never includes the token or the upstream body.
 

@@ -11,7 +11,7 @@ The connector reads data written by **customers** (ticket text, attachment conte
 | Control | Where |
 |---|---|
 | Secret stored only in the encrypted `connector-base` vault; never in `config_json`, logs, exception messages or checkpoints | `ZendeskConnector::handleOAuthCallback`, `SyncManager::client` |
-| Verified (`GET /users/me`, real agent/admin identity) **before** it replaces the stored secret | `ZendeskConnector::verify` |
+| Verified (`GET /users/me`, real admin identity) **before** it replaces the stored secret | `ZendeskConnector::verify` |
 | State token is single-use, tenant- and installation-bound | `BaseConnector::issueOAuthState` / `consumeOAuthState` |
 | Sent only to `https://{subdomain}.zendesk.com`; on attachment downloads only when the URL host equals that host | `ZendeskClient::download` |
 | Upstream error bodies are never echoed; only status, `Retry-After` and allow-listed field names survive | `ZendeskApiException`, `ZendeskClient::validationFields` |

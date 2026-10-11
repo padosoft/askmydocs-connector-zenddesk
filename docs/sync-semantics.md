@@ -36,7 +36,7 @@ Cursor-based incremental user export, requested in pages of 100 so that a timeou
 
 ### `organizations` (if `organizations.enabled`)
 
-Time-based incremental organization export, following `end_time` until `end_of_stream` or a short page. Each organization becomes a profile document. A boundary that cannot advance raises instead of looping.
+Time-based incremental organization export, following `end_time` until `end_of_stream` is true (a payload without the flag falls back to a short or empty page, or an `end_time` of 0). Each organization becomes a profile document. A boundary that cannot advance raises instead of looping.
 
 ### `articles` and `article_check` (if `help_center.enabled`)
 

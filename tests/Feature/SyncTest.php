@@ -440,6 +440,48 @@ final class SyncTest extends TestCase
         $this->assertSame(0, SourceState::where('kind', 'ticket')->count());
     }
 
+    public function test_organization_paging_follows_end_of_stream_not_the_row_count(): void
+    {
+        $middle = now()->subDay()->getTimestamp();
+        $this->zendesk([], function ($request) use ($middle) {
+            if (! str_contains($request->url(), '/incremental/organizations')) {
+                return null;
+            }
+
+            // A short page with end_of_stream=false must not end the export; the next request resumes at end_time.
+            return ((int) $request['start_time']) < $middle
+                ? Http::response(['organizations' => [['id' => 5, 'name' => 'Acme Corp']], 'end_time' => $middle, 'end_of_stream' => false])
+                : Http::response(['organizations' => [['id' => 6, 'name' => 'Globex']], 'end_time' => $middle + 100, 'end_of_stream' => true]);
+        });
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        $titles = array_column(array_filter($this->ingestion->documents, fn ($d) => $d['metadata']['source_kind'] === 'organization'), 'title');
+        $this->assertEqualsCanonicalizing(['Acme Corp', 'Globex'], $titles);
+    }
+
+    public function test_enabling_customers_after_a_completed_scan_backfills_the_whole_window(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized(['customers' => ['enabled' => false], 'organizations' => ['enabled' => false]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame(0, SourceState::where('kind', 'user')->count());
+
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'customers' => ['enabled' => true], 'organizations' => ['enabled' => true]]]);
+        $this->zendesk();
+        $run = app(SyncManager::class)->start($installation);
+        $windowStart = now()->subDays(90)->getTimestamp();
+        $this->assertLessThanOrEqual($windowStart + 5, $run->checkpoint['users_since'], 'newly enabled customers must cover the full window');
+        $this->assertLessThanOrEqual($windowStart + 5, $run->checkpoint['org_since'], 'newly enabled organizations must cover the full window');
+        $this->assertGreaterThan($windowStart + 86400, $run->checkpoint['since'], 'tickets still continue from the previous scan');
+        $this->finish($run);
+        $this->assertSame(1, SourceState::where('kind', 'user')->count());
+
+        // Once covered, the next scan goes back to resuming from the watermark.
+        $this->zendesk();
+        $next = app(SyncManager::class)->start($installation);
+        $this->assertGreaterThan($windowStart + 86400, $next->checkpoint['users_since']);
+        $this->assertGreaterThan($windowStart + 86400, $next->checkpoint['org_since']);
+    }
+
     public function test_titles_are_redacted_like_bodies(): void
     {
         $ticket = ['id' => 1, 'subject' => 'Refund for sensitive@example.com', 'status' => 'open', 'requester_id' => 10, 'created_at' => '2026-10-01T10:00:00Z', 'updated_at' => '2026-10-02T10:00:00Z'];
