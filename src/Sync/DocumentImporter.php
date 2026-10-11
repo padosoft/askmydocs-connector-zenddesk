@@ -141,7 +141,6 @@ final readonly class DocumentImporter
             'user_segment_id' => $article['user_segment_id'] ?? null, 'permission_group_id' => $article['permission_group_id'] ?? null,
             'tags' => array_values(array_map('strval', (array) ($article['label_names'] ?? []))), 'outdated' => (bool) ($article['outdated'] ?? false),
             'created_at' => $article['created_at'] ?? null, 'updated_at' => $article['updated_at'] ?? null, 'edited_at' => $article['edited_at'] ?? null,
-            'html_url' => is_string($article['html_url'] ?? null) ? $article['html_url'] : null,
         ];
         $this->write($installation, $run, 'article', $id, (string) ($article['title'] ?? 'Article'), Markdown::article($article), 'text/markdown', null, $fields,
             SourceAccessPolicy::article($article), ! ($article['outdated'] ?? false));
@@ -262,10 +261,11 @@ final readonly class DocumentImporter
         if (preg_match('/^[1-9][0-9]*$/D', $id) !== 1) {
             throw new \RuntimeException('Zendesk returned an invalid remote identifier.');
         }
+        // The title is indexed text whatever the body is: a subject, a customer or article name, or the file name of a
+        // PDF/DOCX/image attachment can all carry PII, so it is redacted even when the binary body cannot be.
+        $title = $this->ingestion->redactContent($title);
         if (in_array($mime, ['text/markdown', 'text/plain'], true)) {
-            // The title is indexed text too: a subject, a customer name or an article title can carry PII.
             $body = $this->ingestion->redactContent($body);
-            $title = $this->ingestion->redactContent($title);
         }
         $identity = ['tenant_id' => $installation->tenant_id, 'installation_id' => $installation->id, 'kind' => $kind, 'remote_id' => $id];
         $state = SourceState::query()->where($identity)->first();
@@ -311,11 +311,8 @@ final readonly class DocumentImporter
     {
         $host = UrlPolicy::host((string) data_get($installation->config_json, 'connection.subdomain'));
         if ($kind === 'article') {
-            $html = $fields['html_url'] ?? null;
-            if (is_string($html) && strtolower((string) parse_url($html, PHP_URL_HOST)) === $host && (parse_url($html, PHP_URL_SCHEME) === 'https')) {
-                return $html;
-            }
-
+            // Never the article's own `html_url`: its slug is derived from the title and can carry PII that the
+            // (unredacted) metadata envelope would then keep. `/hc/articles/{id}` redirects to the canonical page.
             return 'https://'.$host.'/hc/articles/'.$id;
         }
 

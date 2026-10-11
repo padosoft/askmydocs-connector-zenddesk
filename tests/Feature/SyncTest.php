@@ -682,4 +682,24 @@ final class SyncTest extends TestCase
         $after = collect(array_slice($this->ingestion->documents, $before));
         $this->assertSame([], $after->whereIn('metadata.source_kind', ['article', 'attachment'])->all(), 'switched-off types are not re-imported');
     }
+
+    public function test_binary_attachment_names_and_article_slugs_with_pii_never_reach_titles_or_metadata(): void
+    {
+        $url = 'https://example.zendesk.com/files/leak.pdf';
+        $routes = $this->withAttachment($url, 'sensitive@example.com.pdf', 'application/pdf');
+        $routes['/help_center/articles'] = ['articles' => [['id' => 7, 'title' => 'Guide', 'body' => '<p>x</p>', 'draft' => false, 'locale' => 'en-us', 'user_segment_id' => null,
+            'html_url' => 'https://example.zendesk.com/hc/en-us/articles/7-sensitive-person-at-example', 'updated_at' => '2026-10-02T10:00:00Z']], 'meta' => ['has_more' => false, 'after_cursor' => null]];
+        $this->zendesk($routes, fn ($request) => str_contains($request->url(), '/files/leak.pdf') ? Http::response("%PDF-1.4\n%test\n", 200, ['Content-Type' => 'application/pdf']) : null);
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+
+        $attachment = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'attachment');
+        $this->assertNotNull($attachment);
+        $this->assertStringNotContainsString('sensitive@example.com', $attachment['title']);
+        $this->assertStringNotContainsString('sensitive@example.com', json_encode($attachment['metadata']));
+
+        $article = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', 'article');
+        $this->assertNotNull($article);
+        $this->assertSame('https://example.zendesk.com/hc/articles/7', $article['metadata']['source_url']);
+        $this->assertStringNotContainsString('sensitive-person', json_encode($article['metadata']));
+    }
 }

@@ -82,7 +82,7 @@ Every dispatched document carries:
 | `installation_id` | Installation id |
 | `zendesk_remote_id` | `{installation}:{kind}:{id}` — the deletion key and the `readAcl()` input |
 | `remote_id`, `source_kind` | Raw id and kind |
-| `source_url` | Agent-interface URL (`/agent/tickets/{id}`, `/agent/users/{id}`, `/agent/organizations/{id}`) or the article's `html_url` / `/hc/articles/{id}` |
+| `source_url` | Agent-interface URL (`/agent/tickets/{id}`, `/agent/users/{id}`, `/agent/organizations/{id}`) or `/hc/articles/{id}` for an article (never the article's `html_url`, whose title-derived slug can carry personal data the metadata envelope would keep) |
 | `converter_hints.zendesk` | Vendor fields: status, priority, type, requester/assignee/organization/group ids, channel, tags, timestamps, `internal_notes_included`, article locale/section/segment/permission group, … |
 | `converter_hints._derived` | `search_tags`, `status_active` (open ticket / non-suspended customer / non-outdated article), `recency_bucket`, `owner` (always null — personal emails are not copied to metadata) |
 | `_source_access` | The reported ACL — see [security](security.md#source-access-reporting) |
