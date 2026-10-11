@@ -60,6 +60,9 @@ final class SourceAccessPolicy
         }
         $single = $article['user_segment_id'] ?? null;
         if ($single !== null) {
+            if (! is_int($single) && ! (is_string($single) && ctype_digit($single))) {
+                return SourceAccess::unknown();
+            }
             $segments[(int) $single] = true;
         }
         if ($segments === []) {

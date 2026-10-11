@@ -30,7 +30,7 @@ Every tool schema is `additionalProperties: false`. Before any HTTP call the exe
 `GET /search?query=type:ticket {query}` sorted by `updated_at desc`. Example queries: `status:open priority>normal`, `assignee_id:123 tags:vip`, `created>2026-01-01 printer`.
 
 ### `search_users` / `get_user`
-`GET /users/search?query={term}` (matches name and email) / `GET /users/{id}`.
+`GET /users/search?query={term}` (matches name and email; **only end users are returned**, agents and admins are dropped so an agent can never be mistaken for a requester — use `search_agents` for them) / `GET /users/{id}` (any role, for resolving assignees and requesters by id).
 
 ### `search_agents`
 `GET /search?query=type:user role:agent {term}`. Use only when the user explicitly asks for tickets *assigned to* an agent; then call `search_tickets` with `assignee_id:{verified id}`.

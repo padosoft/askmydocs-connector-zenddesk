@@ -189,7 +189,7 @@ final class ConnectorTest extends TestCase
         $this->assertSame(['zendesk:user_segment:3', 'zendesk:user_segment:9'], $ids($both));
         $this->assertTrue(SourceAccessPolicy::article(['user_segment_id' => null, 'user_segment_ids' => []])->isPublic());
         $this->assertTrue(SourceAccessPolicy::article(['user_segment_id' => null])->isPublic());
-        foreach ([['title' => 'no visibility fields'], ['user_segment_ids' => 'oops'], ['user_segment_ids' => [3, 'x']]] as $payload) {
+        foreach ([['title' => 'no visibility fields'], ['user_segment_ids' => 'oops'], ['user_segment_ids' => [3, 'x']], ['user_segment_id' => '12oops'], ['user_segment_id' => 12.5], ['user_segment_id' => [12]]] as $payload) {
             $unknown = SourceAccessPolicy::article($payload);
             $this->assertFalse($unknown->complete, json_encode($payload));
             $this->assertFalse($unknown->isPublic(), json_encode($payload));

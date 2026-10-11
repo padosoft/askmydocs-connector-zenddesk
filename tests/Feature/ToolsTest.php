@@ -179,8 +179,22 @@ final class ToolsTest extends TestCase
         $this->assertFalse($byEmail['data']['meta']['ambiguous']);
         $partial = $this->run_('search_users', ['term' => 'Anne'], $installation);
         $this->assertTrue($partial['data']['meta']['ambiguous']);
-        $this->fake(['*' => ['users' => [['id' => 42, 'name' => 'Anne Richard'], ['id' => 43, 'name' => 'Anne Richard']]]]);
+        $this->fake(['*' => ['users' => [['id' => 42, 'name' => 'Anne Richard', 'role' => 'end-user'], ['id' => 43, 'name' => 'Anne Richard', 'role' => 'end-user']]]]);
         $this->assertTrue($this->run_('search_users', ['term' => 'Anne Richard'], $installation)['data']['meta']['ambiguous']);
+    }
+
+    public function test_customer_search_never_returns_agents_but_get_user_can(): void
+    {
+        $installation = $this->authorized();
+        $this->fake(['*' => ['users' => [['id' => 7, 'name' => 'Sam Agent', 'email' => 'sam@example.com', 'role' => 'agent'], ['id' => 8, 'name' => 'Sam Customer', 'role' => 'end-user']]]]);
+        $result = $this->run_('search_users', ['term' => 'Sam'], $installation);
+        $this->assertSame([8], array_column($result['data']['records'], 'id'));
+        $this->fake(['*' => ['users' => [['id' => 7, 'name' => 'Sam Agent', 'role' => 'agent']]]]);
+        $onlyAgent = $this->run_('search_users', ['term' => 'Sam Agent'], $installation);
+        $this->assertSame([], $onlyAgent['data']['records'], 'an exact agent match must not look like a customer');
+        $this->assertFalse($onlyAgent['data']['meta']['ambiguous']);
+        $this->fake(['*' => ['user' => ['id' => 7, 'name' => 'Sam Agent', 'role' => 'agent']]]);
+        $this->assertSame('agent', $this->run_('get_user', ['id' => 7], $installation)['data']['records'][0]['role']);
     }
 
     public function test_agent_search_filters_on_the_agent_role_and_organization_search_uses_autocomplete(): void

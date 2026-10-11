@@ -221,7 +221,7 @@ Details and failure semantics: [docs/sync-semantics.md](docs/sync-semantics.md).
 |---|---|---|
 | `list_tickets` | one of `requester_id`, `organization_id`, `email` — plus `cursor?`, `page?`, `per_page?` | Tickets of a verified requester or organization, newest first, all statuses; without a selector, the most recently updated tickets |
 | `search_tickets` | `query`, `page?` | Zendesk search syntax (free text + filters such as `status:open`, `priority>normal`, `assignee_id:123`); `type:ticket` is forced; max 1000 results |
-| `search_users` | `term`, `page?` | Resolve a customer by name or email |
+| `search_users` | `term`, `page?` | Resolve a customer (end user) by name or email; agents are not returned |
 | `get_user` | `id` | A user (customer or agent) by ID |
 | `search_agents` | `term`, `page?` | Resolve a support agent (`role:agent`) |
 | `search_organizations` | `term` | Resolve an organization by name (autocomplete) |
@@ -306,7 +306,7 @@ Full threat notes: [docs/security.md](docs/security.md).
 php artisan queue:work zendesk --queue=zendesk --timeout=600 --tries=3
 ```
 
-- Use an **asynchronous** queue (a `sync` queue is refused) and a cache store with **atomic locks** (Redis): one batch per installation runs at a time, others are deferred by 30 seconds.
+- Use an **asynchronous** queue (a synchronous `queue.default` or `CONNECTOR_ZENDESK_CONNECTION` is refused) and a cache store with **atomic locks** (Redis): one batch per installation runs at a time, others are deferred by 30 seconds.
 - The queue connection's `retry_after` must be greater than 600 seconds.
 - `StartSync($installationId, $tenantId)` is the entry point for your own scheduler; it queues or resumes a scan without marking anything complete.
 - A worker timeout leaves a *resumable* failure (the installation shows `errored`) and keeps the checkpoint; starting a scan again resumes it. No exception body is ever persisted.

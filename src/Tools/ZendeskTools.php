@@ -261,6 +261,11 @@ final readonly class ZendeskTools
             return (bool) data_get($installation->config_json, 'include_internal_notes', true) || ($row['public'] ?? true) !== false;
         }
 
+        if ($action === 'search_users') {
+            // The user search also matches agents and admins; this tool resolves customers (requesters).
+            return ($row['role'] ?? null) === 'end-user';
+        }
+
         // A deleted ticket still answers show with status "deleted" until it is purged; it is not readable content.
         return $action !== 'get_ticket' || ($row['status'] ?? null) !== 'deleted';
     }
@@ -393,7 +398,7 @@ final readonly class ZendeskTools
         return [
             'list_tickets' => $make('List tickets requested by a verified requester_id, belonging to an organization_id, or requested by a literal email (pass at most one); with none, lists the most recently updated tickets. All statuses, newest first. Continue with next_cursor (or page for the email form) while has_more=true.', ['requester_id' => $integer, 'organization_id' => $integer, 'email' => $string, 'cursor' => $string, 'page' => $integer, 'per_page' => $integer]),
             'search_tickets' => $make('Search tickets with Zendesk search syntax: free text plus filters such as status:open, priority>normal, assignee_id:123, organization_id:45, tags:vip, created>2026-01-01. The tool forces type:ticket; at most 1000 results.', ['query' => $string, 'page' => $integer], ['query']),
-            'search_users' => $make('Resolve a customer by name or email before listing their tickets. Proceed only for a unique exact match or a user selection; meta.ambiguous=true requires selection.', ['term' => $string, 'page' => $integer], ['term']),
+            'search_users' => $make('Resolve a customer (end user) by name or email before listing their tickets; agents are not returned (use search_agents). Proceed only for a unique exact match or a user selection; meta.ambiguous=true requires selection.', ['term' => $string, 'page' => $integer], ['term']),
             'get_user' => $make('Read a verified user (customer or agent) by numeric ID, including name, email, organization and role.', ['id' => $integer], ['id']),
             'search_agents' => $make('Resolve a support agent by name or email only when the user explicitly asks for assigned tickets. Then use search_tickets with assignee_id:<verified ID>.', ['term' => $string, 'page' => $integer], ['term']),
             'search_organizations' => $make('Resolve a customer organization by name before listing its tickets (autocomplete: first matches only).', ['term' => $string], ['term']),

@@ -73,7 +73,9 @@ final class SyncManager
         if (! in_array($installation->status, ['active', 'errored'], true)) {
             throw new \RuntimeException('Enable the Zendesk installation before importing.');
         }
-        if (config('queue.default') === 'sync') {
+        // The connection ProcessSyncBatch really uses: the connector-specific one when set, else the default.
+        $connection = config('connector-zendesk.sync.connection') ?: config('queue.default');
+        if (config('queue.connections.'.$connection.'.driver') === 'sync' || $connection === 'sync') {
             throw new \RuntimeException('Zendesk imports require an asynchronous queue connection.');
         }
         $mode = $history ? 'history' : 'window';
@@ -268,10 +270,14 @@ final class SyncManager
                 default => $this->refreshOrganization($installation, $run, $client, (int) $state->remote_id),
             };
         } catch (ZendeskApiException $exception) {
-            // A 404 on a known object is not deletion evidence here: the export streams report deletions.
             if ($exception->status !== 404) {
                 throw $exception;
             }
+            // The refresh exists because what was indexed no longer matches the settings (private notes now
+            // excluded, another project). An object that cannot be read again cannot be regenerated, and the
+            // incremental exports will not revisit it, so keeping the old copy would keep stale private text or a
+            // copy in the previous project indefinitely: retire it.
+            $this->importer->delete($installation, $run, $kind, $state->remote_id);
         }
         $cp['refresh_cursor'] = $state->id;
 

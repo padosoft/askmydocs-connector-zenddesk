@@ -11,7 +11,7 @@
 
 `SyncManager::start($installation, history: false)`:
 
-1. refuses an installation that is not `active` or `errored`, and refuses the `sync` queue driver;
+1. refuses an installation that is not `active` or `errored`, and refuses a synchronous queue: the connection checked is the one the jobs really use (`CONNECTOR_ZENDESK_CONNECTION` when set, otherwise `queue.default`);
 2. inside a transaction that locks the installation row, **reuses** any scan that is queued, running or failed (a failed one is re-queued) — so two operators clicking *Sync now* never create two scans, and *Fetch all* only reuses a *history* scan;
 3. otherwise creates a scan whose export start is
    - ordinary: `now - date_window_days`, moved forward to the previous completed scan's start minus `sync.overlap_seconds` when the window has not grown;
@@ -77,6 +77,8 @@ The destination path (which contains the project key) is part of the fingerprint
 
 The refresh pass is needed because incremental exports resume near the previous watermark: an object that did not change in Zendesk would otherwise never be exported again.
 
+If the refresh cannot re-read a known object (`404`), the object is **retired** rather than left as it was: it cannot be regenerated under the new settings, the exports will not revisit it, and keeping the old copy would keep stale private notes, or a copy in the previous project, indefinitely. This is the one place where a `404` on a known object removes its document; in the normal ticket stream a `404` is still ignored and deletions come from the export itself.
+
 ## Settings that change what an object contains or where it lives
 
 The effective project, `include_internal_notes`, the `attachments` options and the host's `kb.ocr.enabled` are hashed into `projection_hash`. When the hash differs from the previous completed scan, the next scan begins with a `refresh` pass that re-imports every known ticket, then every known customer, then every known organization (one per step, each only while its content type is enabled) before the normal phases. This is how switching internal notes off removes already-indexed private text, and its attachments, from the KB.
@@ -98,6 +100,6 @@ Restarting after any failure **resumes** the same scan from its checkpoint.
 ## What is never deleted
 
 - Tickets that merely fall outside the ordinary window.
-- Anything on a `404` of a ticket (archived tickets answer 404).
+- Anything on a `404` of a ticket in the normal stream (the export reports deletions). The refresh pass is the documented exception, see above.
 - Articles absent from a list but not confirmed gone.
 - Documents of a content type the operator later disabled. This includes history scans: `customer_check` reconciles customers only while `customers.enabled` is on, and organizations only while `organizations.enabled` is on.

@@ -15,12 +15,13 @@ All notable changes to `padosoft/askmydocs-connector-zendesk` are documented her
 - Content fingerprints, per-installation atomic lock, `Retry-After` handling, cancellation on pause or disconnect, and deletion only on confirmed evidence.
 - Rebinding an installation to another KB project re-delivers every known ticket, customer and organization there (refresh pass) and retires the copy in the previous project; attachment file names never reach metadata; titles are redacted like bodies; attachments Zendesk later flags as deleted or malware are removed from the index; history reconciliation honours the customers/organizations switches.
 - Help Center visibility honours both `user_segment_id` and the plural `user_segment_ids`, and reports *unknown* (never public) when the payload carries neither; the user export is requested in pages of 100; articles outside a newly configured locale are retired; locale-scoped paths such as `/help_center/en-us/articles` are accepted by the client.
+- The synchronous-queue guard checks the connection the import jobs really use; a refresh that cannot re-read a known object retires its document instead of keeping stale content; `search_users` returns customers only; a malformed singular `user_segment_id` is reported as unknown.
 - Installation switches: internal notes, customers, organizations, Help Center (with optional locale), attachment limits and the provenance tier; a change to content settings re-imports known tickets.
 - Eleven read-only live tools per installation (`list_tickets`, `search_tickets`, `search_users`, `get_user`, `search_agents`, `search_organizations`, `get_organization`, `get_ticket`, `list_comments`, `search_articles`, `get_article`) with project scoping, strict argument validation, size caps, coverage metadata and structured errors.
 - Agent usage profile (`resources/agent-usage.json`, schema version 1) published through `extra.askmydocs.agent_usage`.
 - Source ACL reporting (`zendesk:agents`, `anyone`, `zendesk:user_segment:{id}`) stamped on every document and available through `readAcl()`.
 - SSRF-hardened HTTP layer: account-subdomain validation, attachment host allow-list, per-hop redirect validation and DNS pinning to public addresses; credentials sent only to the account host.
-- Testbench suite (86 tests), PHPStan level 6, Laravel Pint, GitHub Actions matrix (PHP 8.3/8.4 × Laravel 12/13).
+- Testbench suite (89 tests), PHPStan level 6, Laravel Pint, GitHub Actions matrix (PHP 8.3/8.4 × Laravel 12/13).
 - Documentation: README and `docs/` (architecture, credential setup, sync semantics, live tools, data model, security, API notes, troubleshooting, development).
 
 ### Known limitations

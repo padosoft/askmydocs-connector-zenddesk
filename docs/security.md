@@ -60,7 +60,7 @@ Attachments are customer-supplied files, the highest-risk input the package touc
 | Attachment | inherits from its ticket |
 | Article, no user segment | `anyone` |
 | Article with `user_segment_id` and/or a non-empty `user_segment_ids` | one group `zendesk:user_segment:{id}` per segment (the plural list wins even when the singular field is null) |
-| Article whose payload carries neither field, or a malformed one | `SourceAccess::unknown()` — a missing field is never read as a public share |
+| Article whose payload carries neither field, or a malformed one (non-integer segment id, non-list plural field) | `SourceAccess::unknown()` — a missing or malformed field is never read as a public share or as a guessed segment |
 
 The requester is **not** reported as a reader of their ticket: the indexed document contains internal notes the requester can never see. If Zendesk cannot answer (5xx, malformed), `SourceAccess::unknown()` is returned — never an empty allow-list, because "nobody" and "we could not find out" must stay distinguishable. 401/403 are raised as `ConnectorAuthException`, never swallowed.
 

@@ -413,6 +413,33 @@ final class SyncTest extends TestCase
         $this->assertSame(1, SourceState::where('kind', 'article')->count());
     }
 
+    public function test_the_connector_specific_queue_connection_must_be_asynchronous_too(): void
+    {
+        $installation = $this->authorized();
+        config(['queue.default' => 'database', 'connector-zendesk.sync.connection' => 'sync']);
+        try {
+            app(SyncManager::class)->start($installation);
+            $this->fail('A synchronous connector connection would run the whole import inline.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('asynchronous queue', $exception->getMessage());
+        }
+        config(['connector-zendesk.sync.connection' => null]);
+        $this->assertSame('queued', app(SyncManager::class)->start($installation)->status);
+    }
+
+    public function test_a_refresh_that_cannot_re_read_a_known_ticket_retires_the_stale_copy(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'include_internal_notes' => false]]);
+        // The ticket can no longer be read; the incremental export does not return it either.
+        $this->zendesk(['/tickets/1' => 404, '/incremental/tickets/cursor' => ['tickets' => [], 'after_cursor' => 'x', 'end_of_stream' => true]]);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertContains(['tenant-a', $installation->id.':ticket:1'], $this->ingestion->deleted, 'private notes must not stay indexed');
+        $this->assertSame(0, SourceState::where('kind', 'ticket')->count());
+    }
+
     public function test_titles_are_redacted_like_bodies(): void
     {
         $ticket = ['id' => 1, 'subject' => 'Refund for sensitive@example.com', 'status' => 'open', 'requester_id' => 10, 'created_at' => '2026-10-01T10:00:00Z', 'updated_at' => '2026-10-02T10:00:00Z'];
