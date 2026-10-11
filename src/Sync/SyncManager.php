@@ -232,6 +232,12 @@ final class SyncManager
             return false;
         }
         $phase = (string) ($cp['phase'] ?? 'tickets');
+        if ($phase !== 'done' && ! $this->enabled($installation, $run, $phase)) {
+            // The type was switched off after the scan started (or before a failed scan was resumed): stop importing it now.
+            $run->checkpoint = $this->transition($installation, $run, $cp, $phase);
+
+            return ($run->checkpoint['phase'] ?? null) === 'done';
+        }
         $cp = match ($phase) {
             'tickets' => $this->ticketsStep($installation, $run, $client, $cp),
             'users' => $this->usersStep($installation, $run, $client, $cp),
@@ -691,6 +697,8 @@ final class SyncManager
             'internal' => data_get($installation->config_json, 'include_internal_notes', true),
             'attachments' => data_get($installation->config_json, 'attachments', []),
             'ocr' => config('kb.ocr.enabled', false),
+            // A host-wide policy that decides which attachments are imported: changing it must revisit known tickets.
+            'allow_unscanned' => (bool) config('connector-zendesk.attachments.allow_unscanned', false),
         ], JSON_THROW_ON_ERROR));
     }
 

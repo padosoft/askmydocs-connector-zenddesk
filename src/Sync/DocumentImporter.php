@@ -267,6 +267,13 @@ final readonly class DocumentImporter
         if (in_array($mime, ['text/markdown', 'text/plain'], true)) {
             $body = $this->ingestion->redactContent($body);
         }
+        // Operator-chosen vocabularies (tags, labels, domain names) can carry names, phone numbers or account ids, and
+        // the metadata envelope reaches the converter hints and search tags unredacted by the host: redact them here.
+        foreach (['tags', 'domain_names'] as $list) {
+            if (isset($fields[$list]) && is_array($fields[$list])) {
+                $fields[$list] = array_values(array_map(fn ($value) => $this->ingestion->redactContent((string) $value), $fields[$list]));
+            }
+        }
         $identity = ['tenant_id' => $installation->tenant_id, 'installation_id' => $installation->id, 'kind' => $kind, 'remote_id' => $id];
         $state = SourceState::query()->where($identity)->first();
         $project = $installation->project_key ?: data_get($installation->config_json, 'project_key', config('kb.ingest.default_project', 'default'));

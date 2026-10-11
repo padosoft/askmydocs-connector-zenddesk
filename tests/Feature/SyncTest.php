@@ -702,4 +702,46 @@ final class SyncTest extends TestCase
         $this->assertSame('https://example.zendesk.com/hc/articles/7', $article['metadata']['source_url']);
         $this->assertStringNotContainsString('sensitive-person', json_encode($article['metadata']));
     }
+
+    public function test_vendor_tags_and_domain_names_are_redacted_in_the_metadata(): void
+    {
+        $this->zendesk([
+            '/tickets/1' => ['ticket' => ['id' => 1, 'subject' => 's', 'status' => 'open', 'tags' => ['sensitive@example.com', 'urgent'], 'requester_id' => 10], 'users' => []],
+            '/incremental/organizations' => ['organizations' => [['id' => 5, 'name' => 'Acme', 'domain_names' => ['sensitive@example.com'], 'tags' => ['sensitive@example.com']]], 'end_time' => 1760000000, 'end_of_stream' => true],
+            '/help_center/articles' => ['articles' => [['id' => 7, 'title' => 'Guide', 'body' => '<p>x</p>', 'draft' => false, 'locale' => 'en-us', 'user_segment_id' => null, 'label_names' => ['sensitive@example.com'], 'updated_at' => '2026-10-02T10:00:00Z']], 'meta' => ['has_more' => false, 'after_cursor' => null]],
+        ]);
+        $this->finish(app(SyncManager::class)->start($this->authorized()));
+        foreach (['ticket', 'organization', 'article'] as $kind) {
+            $document = collect($this->ingestion->documents)->firstWhere('metadata.source_kind', $kind);
+            $this->assertNotNull($document, $kind);
+            $this->assertStringNotContainsString('sensitive@example.com', json_encode($document['metadata']), $kind);
+        }
+    }
+
+    public function test_a_phase_switched_off_mid_scan_is_skipped_instead_of_finished(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        $cp = $run->checkpoint;
+        $cp['phase'] = 'users';
+        $run->checkpoint = $cp;
+        $run->save();
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'customers' => ['enabled' => false]]]);
+        // No /incremental/users route is faked: asking for it would hit the fixture's "unexpected path" failure.
+        $this->zendesk();
+        $this->finish($run);
+
+        $this->assertSame(0, SourceState::where('kind', 'user')->count());
+        $this->assertSame('done', $run->fresh()->checkpoint['phase']);
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/incremental/users'));
+    }
+
+    public function test_the_unscanned_attachment_policy_is_part_of_the_projection(): void
+    {
+        $installation = $this->installation();
+        config()->set('connector-zendesk.attachments.allow_unscanned', false);
+        $off = SyncManager::projection($installation);
+        config()->set('connector-zendesk.attachments.allow_unscanned', true);
+        $this->assertNotSame($off, SyncManager::projection($installation));
+    }
 }
