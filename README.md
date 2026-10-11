@@ -113,7 +113,7 @@ composer require 'padosoft/askmydocs-connector-zendesk:^1.0'
 php artisan migrate
 ```
 
-> The Composer package is `padosoft/askmydocs-connector-zendesk`; the GitHub repository slug is `askmydocs-connector-zenddesk` (historical spelling). Until the first `v1.x` tag exists, require `dev-main`.
+> The Composer package is `padosoft/askmydocs-connector-zendesk`; the GitHub repository slug is `askmydocs-connector-zenddesk` (historical spelling). The current release is `v1.0.0`; it has been validated with simulated HTTP only, so run a first scan against a Zendesk sandbox before pointing it at production (see [docs/zendesk-api.md](docs/zendesk-api.md)).
 
 Optional publishes:
 

@@ -4,6 +4,8 @@ All notable changes to `padosoft/askmydocs-connector-zendesk` are documented her
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-10-11
+
 ### Added
 
 - `zendesk` connector for AskMyDocs built on `padosoft/askmydocs-connector-base ^1.6`, with the capabilities `SupportsCredentialForm`, `SupportsConnectionSettings`, `DeclaresProvenance` and `SupportsSourceAcl`.
@@ -25,3 +27,6 @@ All notable changes to `padosoft/askmydocs-connector-zendesk` are documented her
 - OAuth access tokens are not refreshed by the package.
 - Custom host-mapped domains are not supported; use the `*.zendesk.com` subdomain.
 - Zendesk Guide content other than articles (community posts, custom objects, chat transcripts, voice recordings) is not imported.
+
+[Unreleased]: https://github.com/padosoft/askmydocs-connector-zenddesk/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/padosoft/askmydocs-connector-zenddesk/releases/tag/v1.0.0
