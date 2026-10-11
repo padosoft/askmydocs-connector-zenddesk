@@ -744,4 +744,58 @@ final class SyncTest extends TestCase
         config()->set('connector-zendesk.attachments.allow_unscanned', true);
         $this->assertNotSame($off, SyncManager::projection($installation));
     }
+
+    public function test_widening_the_ticket_export_scope_restarts_the_ticket_window(): void
+    {
+        $this->zendesk();
+        $installation = $this->authorized();
+        $first = app(SyncManager::class)->start($installation);
+        $this->finish($first);
+        $resumed = app(SyncManager::class)->start($installation);
+        $this->assertGreaterThan($first->fresh()->checkpoint['since'] + 3600, $resumed->checkpoint['since'], 'an unchanged scope resumes near the previous scan');
+        $this->finish($resumed);
+
+        config()->set('connector-zendesk.sync.ticket_support_type_scope', 'all');
+        $widened = app(SyncManager::class)->start($installation);
+        $this->assertSame('all', $widened->checkpoint['ticket_scope']);
+        $this->assertLessThanOrEqual(now()->subDays(89)->getTimestamp(), $widened->checkpoint['since'], 'the whole window is exported again');
+    }
+
+    public function test_a_phase_skipped_mid_scan_is_recorded_as_not_covered_so_enabling_it_later_backfills(): void
+    {
+        $installation = $this->authorized();
+        $run = app(SyncManager::class)->start($installation);
+        $cp = $run->checkpoint;
+        $cp['phase'] = 'users';
+        $run->checkpoint = $cp;
+        $run->save();
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'customers' => ['enabled' => false]]]);
+        $this->zendesk();
+        $this->finish($run);
+        $this->assertFalse($run->fresh()->checkpoint['content']['customers']);
+
+        $installation->update(['config_json' => ['connection' => $installation->config_json['connection'], 'customers' => ['enabled' => true]]]);
+        $next = app(SyncManager::class)->start($installation);
+        $this->assertLessThanOrEqual(now()->subDays(89)->getTimestamp(), $next->checkpoint['users_since'], 'customers get the whole window');
+    }
+
+    public function test_attachments_that_no_longer_pass_the_malware_policy_are_removed_from_the_index(): void
+    {
+        $url = 'https://example.zendesk.com/files/info.txt';
+        $download = fn ($request) => str_contains($request->url(), '/files/info.txt') ? Http::response('hello world', 200, ['Content-Type' => 'text/plain']) : null;
+        $routes = $this->withAttachment($url);
+        $routes['/tickets/1/comments']['comments'][0]['attachments'][0]['malware_scan_result'] = 'not_scanned';
+        config()->set('connector-zendesk.attachments.allow_unscanned', true);
+        $this->zendesk($routes, $download);
+        $installation = $this->authorized();
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame(1, SourceState::where('kind', 'attachment')->count());
+
+        // The operator restores the fail-closed policy: the projection changes, the refresh revisits the ticket.
+        config()->set('connector-zendesk.attachments.allow_unscanned', false);
+        $this->zendesk($routes, $download);
+        $this->finish(app(SyncManager::class)->start($installation));
+        $this->assertSame(0, SourceState::where('kind', 'attachment')->count());
+        $this->assertContains(['tenant-a', $installation->id.':attachment:55'], $this->ingestion->deleted);
+    }
 }

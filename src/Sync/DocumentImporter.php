@@ -177,7 +177,7 @@ final readonly class DocumentImporter
         // Deleted or malware-flagged files are positive evidence that the file must not stay indexed.
         $remoteVisible = [];
         foreach ($attachments as $attachment) {
-            if (! ($attachment['deleted'] ?? false) && ($attachment['malware_scan_result'] ?? '') !== 'malware_found') {
+            if (! ($attachment['deleted'] ?? false) && $this->passesMalwarePolicy($attachment)) {
                 $remoteVisible[] = (int) ($attachment['id'] ?? 0);
             }
         }
@@ -193,6 +193,24 @@ final readonly class DocumentImporter
     }
 
     /**
+     * Fail closed: only an explicit "malware_not_found" is a clean verdict. "not_scanned", "failed_to_scan" and an
+     * absent field are unverified customer-controlled bytes (scans can lag); `allow_unscanned` opts in, and
+     * "malware_found" never passes. A file that no longer passes (a verdict that turned bad, or the opt-in being
+     * withdrawn) is also removal evidence for a copy that was already indexed.
+     *
+     * @param  array<string|int,mixed>  $attachment
+     */
+    private function passesMalwarePolicy(array $attachment): bool
+    {
+        $scan = $attachment['malware_scan_result'] ?? null;
+        if ($scan === 'malware_not_found') {
+            return true;
+        }
+
+        return (bool) config('connector-zendesk.attachments.allow_unscanned', false) && in_array($scan, [null, 'not_scanned', 'failed_to_scan'], true);
+    }
+
+    /**
      * @param  array<string|int,mixed>  $attachment
      */
     private function attachment(ConnectorInstallation $installation, SyncRun $run, ZendeskClient $client, array $attachment, string $ticketId): bool
@@ -205,12 +223,7 @@ final readonly class DocumentImporter
             $mimes += self::IMAGE_MIMES;
         }
         $maxBytes = max(1, min(100, (int) data_get($installation->config_json, 'attachments.max_size_mb', 25))) * 1024 * 1024;
-        // Fail closed: only an explicit "malware_not_found" is a clean verdict. "not_scanned", "failed_to_scan" and
-        // an absent field are unverified customer-controlled bytes (scans can lag); `allow_unscanned` opts in.
-        $scan = $attachment['malware_scan_result'] ?? null;
-        $unscannedOk = (bool) config('connector-zendesk.attachments.allow_unscanned', false) && in_array($scan, [null, 'not_scanned', 'failed_to_scan'], true);
-        $malware = $scan !== 'malware_not_found' && ! $unscannedOk;
-        if ($malware || ($attachment['deleted'] ?? false) || ! isset($mimes[$extension]) || (int) ($attachment['size'] ?? 0) > $maxBytes || ! isset($attachment['id'], $attachment['content_url'])) {
+        if (! $this->passesMalwarePolicy($attachment) || ($attachment['deleted'] ?? false) || ! isset($mimes[$extension]) || (int) ($attachment['size'] ?? 0) > $maxBytes || ! isset($attachment['id'], $attachment['content_url'])) {
             $this->count($run, 'attachments_skipped');
 
             return false;

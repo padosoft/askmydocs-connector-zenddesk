@@ -297,7 +297,7 @@ Full threat notes: [docs/security.md](docs/security.md).
 | `sync.batch_items` / `batch_seconds` | `5` / `60` | Steps and indicative duration of one batch |
 | `sync.overlap_seconds` | `120` | Re-scan overlap before the previous watermark |
 | `sync.export_min_age_seconds` | `90` | Keeps the export `start_time` safely in the past |
-| `sync.ticket_support_type_scope` | *(unset)* | `CONNECTOR_ZENDESK_TICKET_SCOPE`: `agent`, `ai_agent` or `all`, sent as `support_type_scope` to the ticket export. Unset keeps Zendesk's default; use `all` to include AI-agent tickets (not yet verified live) |
+| `sync.ticket_support_type_scope` | *(unset)* | `CONNECTOR_ZENDESK_TICKET_SCOPE`: `agent`, `ai_agent` or `all`, sent as `support_type_scope` to the ticket export. Unset keeps Zendesk's default; use `all` to include AI-agent tickets (not yet verified live). Changing it restarts the ticket window on the next scan |
 | `attachments.allow_unscanned` | `false` | `CONNECTOR_ZENDESK_ALLOW_UNSCANNED`: also import files whose malware scan is `not_scanned`, `failed_to_scan` or missing. Off by default: only `malware_not_found` is imported |
 | `sync.queue` / `sync.connection` | `zendesk` / *(default)* | `CONNECTOR_ZENDESK_QUEUE`, `CONNECTOR_ZENDESK_CONNECTION` |
 | `sync.middleware` | `[]` | Job middleware for `ProcessSyncBatch` and `StartSync` |

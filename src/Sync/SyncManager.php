@@ -114,6 +114,10 @@ final class SyncManager
                 'organizations' => (bool) data_get($installation->config_json, 'organizations.enabled', true),
             ];
             $before = (array) ($previous?->checkpoint['content'] ?? []);
+            // A different ticket export scope (e.g. AI-agent tickets now included) has never been exported for this
+            // window either: restart the ticket window instead of resuming near the previous watermark.
+            $scope = self::ticketScope();
+            $ticketSince = $previous !== null && ($previous->checkpoint['ticket_scope'] ?? 'agent') !== $scope ? $windowStart->min($newest) : $since;
             $usersSince = $content['customers'] && ! ($before['customers'] ?? false) ? $windowStart->min($newest) : $since;
             $organizationsSince = $content['organizations'] && ! ($before['organizations'] ?? false) ? $windowStart->min($newest) : $since;
             $dispatch = true;
@@ -122,7 +126,7 @@ final class SyncManager
                 'tenant_id' => $installation->tenant_id, 'installation_id' => $installation->id, 'mode' => $mode,
                 'status' => 'queued', 'scan_started_at' => now(), 'counts' => [],
                 'checkpoint' => [
-                    'phase' => 'tickets', 'since' => $since->getTimestamp(), 'initial_since' => $since->getTimestamp(),
+                    'phase' => 'tickets', 'since' => $ticketSince->getTimestamp(), 'initial_since' => $ticketSince->getTimestamp(), 'ticket_scope' => $scope,
                     'users_since' => $usersSince->getTimestamp(), 'org_since' => $organizationsSince->getTimestamp(), 'content' => $content, 'cursor' => null, 'pending' => [], 'pages' => 0,
                     'window_days' => $history ? 36500 : $window, 'projection_hash' => $projection, 'refresh' => $refresh, 'refresh_kind' => 'ticket', 'refresh_cursor' => 0,
                 ],
@@ -233,7 +237,13 @@ final class SyncManager
         }
         $phase = (string) ($cp['phase'] ?? 'tickets');
         if ($phase !== 'done' && ! $this->enabled($installation, $run, $phase)) {
-            // The type was switched off after the scan started (or before a failed scan was resumed): stop importing it now.
+            // The type was switched off after the scan started (or before a failed scan was resumed): stop importing it
+            // now, and record that it was NOT covered so enabling it again back-fills the whole window.
+            match ($phase) {
+                'users' => $cp['content']['customers'] = false,
+                'organizations' => $cp['content']['organizations'] = false,
+                default => null,
+            };
             $run->checkpoint = $this->transition($installation, $run, $cp, $phase);
 
             return ($run->checkpoint['phase'] ?? null) === 'done';
@@ -371,9 +381,9 @@ final class SyncManager
             return $this->transition($installation, $run, $cp, 'tickets');
         }
         $query = ($cp['cursor'] ?? null) !== null ? ['cursor' => $cp['cursor']] : ['start_time' => (int) $cp['since']];
-        $scope = config('connector-zendesk.sync.ticket_support_type_scope');
-        if (in_array($scope, ['agent', 'ai_agent', 'all'], true)) {
-            $query['support_type_scope'] = $scope;
+        $configured = config('connector-zendesk.sync.ticket_support_type_scope');
+        if (in_array($configured, ['agent', 'ai_agent', 'all'], true)) {
+            $query['support_type_scope'] = $configured;
         }
         $data = $client->get('/incremental/tickets/cursor', $query);
         $pending = [];
@@ -680,6 +690,14 @@ final class SyncManager
     }
 
     /** Hash of everything that changes what an already-imported object would contain or where it lives. */
+    /** The effective ticket export scope: the configured value when valid, otherwise Zendesk's default `agent`. */
+    public static function ticketScope(): string
+    {
+        $scope = config('connector-zendesk.sync.ticket_support_type_scope');
+
+        return in_array($scope, ['agent', 'ai_agent', 'all'], true) ? $scope : 'agent';
+    }
+
     /** The KB project documents of this installation are delivered to. */
     public static function project(ConnectorInstallation $installation): string
     {
