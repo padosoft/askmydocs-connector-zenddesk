@@ -183,14 +183,29 @@ final class ConnectorTest extends TestCase
         $this->assertSame(SourcePrincipal::TYPE_GROUP, $restricted->principals[0]->type);
     }
 
-    public function test_acl_for_a_ticket_is_the_agents_group_only_never_the_requester(): void
+    public function test_acl_for_a_ticket_is_unknown_never_all_agents_and_never_the_requester(): void
     {
         $installation = $this->authorized();
         $this->zendesk();
         $acl = $this->connector()->readAcl(RemoteId::format($installation->id, 'ticket', '1'));
-        $this->assertSame(['zendesk:agents'], array_map(fn ($p) => $p->externalId, $acl->principals));
-        $this->assertStringNotContainsString('anne@example.test', json_encode($acl->toArray()));
+        // Agents may be restricted to assigned tickets, groups, brands or organizations: no blanket agent grant.
+        $this->assertFalse($acl->complete);
         $this->assertFalse($acl->isPublic());
+        $this->assertStringNotContainsString('zendesk:agents', json_encode($acl->toArray()));
+        $this->assertStringNotContainsString('anne@example.test', json_encode($acl->toArray()));
+    }
+
+    public function test_a_tickets_support_group_is_reported_only_as_a_partial_hint(): void
+    {
+        $ids = fn ($acl) => array_map(fn ($p) => $p->externalId, $acl->principals);
+        foreach ([98738, '98738'] as $group) {
+            $acl = SourceAccessPolicy::agentRecord($group);
+            $this->assertFalse($acl->complete);
+            $this->assertSame(['zendesk:group:98738'], $ids($acl));
+        }
+        foreach ([null, '', 'x'] as $group) {
+            $this->assertSame([], $ids(SourceAccessPolicy::agentRecord($group)));
+        }
     }
 
     public function test_article_acl_honours_plural_segments_and_never_reads_a_missing_field_as_public(): void
@@ -221,12 +236,13 @@ final class ConnectorTest extends TestCase
         $this->connector()->readAcl(RemoteId::format($installation->id, 'article', '7'));
     }
 
-    public function test_acl_for_profiles_is_agents_only_and_for_attachments_is_inherited(): void
+    public function test_acl_for_profiles_is_unknown_and_for_attachments_is_inherited(): void
     {
         $installation = $this->authorized();
         $user = $this->connector()->readAcl(RemoteId::format($installation->id, 'user', '10'));
         $this->assertInstanceOf(SourceAccess::class, $user);
-        $this->assertSame('zendesk:agents', $user->principals[0]->externalId);
+        $this->assertFalse($user->complete);
+        $this->assertSame([], $user->principals);
         $this->assertTrue($this->connector()->readAcl(RemoteId::format($installation->id, 'attachment', '55'))->inheritsFromParent);
     }
 

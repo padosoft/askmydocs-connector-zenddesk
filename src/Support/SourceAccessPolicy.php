@@ -13,24 +13,33 @@ use Padosoft\AskMyDocsConnectorBase\Access\SourcePrincipal;
  * identifiers to its own subjects.
  *
  * Group identifiers are namespaced so a host can tell them apart:
- *   - `zendesk:agents`            — every agent and admin of the account;
+ *   - `zendesk:group:{id}`        — the support group a ticket is assigned to (a hint, never a grant);
  *   - `zendesk:user_segment:{id}` — a Help Center user segment.
  */
 final class SourceAccessPolicy
 {
-    public const GROUP_AGENTS = 'zendesk:agents';
+    public const GROUP_SUPPORT_GROUP_PREFIX = 'zendesk:group:';
 
     public const GROUP_USER_SEGMENT_PREFIX = 'zendesk:user_segment:';
 
     /**
-     * Tickets, customer profiles and organization profiles are agent-facing
-     * records. The requester is deliberately NOT reported as a principal: the
-     * ingested document includes internal notes the requester can never see,
-     * so a host that mapped the requester's email to a user would leak them.
+     * Tickets, customer profiles and organization profiles are agent-facing records, but WHICH agents may open
+     * them depends on per-account configuration the connector cannot represent: roles restricted to assigned
+     * tickets, to their groups, to their brand or to their organization. Reporting a blanket "all agents" group
+     * would let a host expose a private-group ticket (and its internal notes) to agents Zendesk itself would
+     * deny, so the answer is "unknown". The requester is deliberately NOT reported either: the document
+     * includes internal notes the requester can never see.
+     *
+     * A ticket's support group is passed along as a partial hint so a host that mirrors Zendesk groups can
+     * narrow further; it is evidence, not a grant.
      */
-    public static function agentsOnly(): SourceAccess
+    public static function agentRecord(int|string|null $groupId = null): SourceAccess
     {
-        return SourceAccess::of([SourcePrincipal::group(self::GROUP_AGENTS)]);
+        $hint = is_int($groupId) || (is_string($groupId) && ctype_digit($groupId))
+            ? [SourcePrincipal::group(self::GROUP_SUPPORT_GROUP_PREFIX.$groupId)]
+            : [];
+
+        return SourceAccess::unknown($hint);
     }
 
     /**

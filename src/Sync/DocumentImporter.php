@@ -92,7 +92,7 @@ final readonly class DocumentImporter
             'created_at' => $ticket['created_at'] ?? null, 'updated_at' => $ticket['updated_at'] ?? null, 'internal_notes_included' => $internal,
         ];
         $this->write($installation, $run, 'ticket', (string) $ticket['id'], (string) ($ticket['subject'] ?? 'Ticket #'.$ticket['id']), $body, 'text/markdown', null, $fields,
-            SourceAccessPolicy::agentsOnly(), ! in_array($ticket['status'] ?? '', ['closed', 'solved'], true));
+            SourceAccessPolicy::agentRecord($ticket['group_id'] ?? null), ! in_array($ticket['status'] ?? '', ['closed', 'solved'], true));
         $this->attachments($installation, $run, $client, (string) $ticket['id'], $comments);
     }
 
@@ -108,7 +108,7 @@ final readonly class DocumentImporter
             'tags' => array_values(array_map('strval', (array) ($user['tags'] ?? []))), 'created_at' => $user['created_at'] ?? null, 'updated_at' => $user['updated_at'] ?? null,
         ];
         $this->write($installation, $run, 'user', (string) $user['id'], (string) ($user['name'] ?? 'Customer #'.$user['id']), $body, 'text/markdown', null, $fields,
-            SourceAccessPolicy::agentsOnly(), ! ($user['suspended'] ?? false));
+            SourceAccessPolicy::agentRecord(), ! ($user['suspended'] ?? false));
     }
 
     /**
@@ -122,7 +122,7 @@ final readonly class DocumentImporter
             'created_at' => $organization['created_at'] ?? null, 'updated_at' => $organization['updated_at'] ?? null,
         ];
         $this->write($installation, $run, 'organization', (string) $organization['id'], (string) ($organization['name'] ?? 'Organization #'.$organization['id']),
-            Markdown::organization($organization), 'text/markdown', null, $fields, SourceAccessPolicy::agentsOnly(), true);
+            Markdown::organization($organization), 'text/markdown', null, $fields, SourceAccessPolicy::agentRecord(), true);
     }
 
     /**
@@ -206,7 +206,11 @@ final readonly class DocumentImporter
             $mimes += self::IMAGE_MIMES;
         }
         $maxBytes = max(1, min(100, (int) data_get($installation->config_json, 'attachments.max_size_mb', 25))) * 1024 * 1024;
-        $malware = ($attachment['malware_scan_result'] ?? 'malware_not_found') === 'malware_found';
+        // Fail closed: only an explicit "malware_not_found" is a clean verdict. "not_scanned", "failed_to_scan" and
+        // an absent field are unverified customer-controlled bytes (scans can lag); `allow_unscanned` opts in.
+        $scan = $attachment['malware_scan_result'] ?? null;
+        $unscannedOk = (bool) config('connector-zendesk.attachments.allow_unscanned', false) && in_array($scan, [null, 'not_scanned', 'failed_to_scan'], true);
+        $malware = $scan !== 'malware_not_found' && ! $unscannedOk;
         if ($malware || ($attachment['deleted'] ?? false) || ! isset($mimes[$extension]) || (int) ($attachment['size'] ?? 0) > $maxBytes || ! isset($attachment['id'], $attachment['content_url'])) {
             $this->count($run, 'attachments_skipped');
 

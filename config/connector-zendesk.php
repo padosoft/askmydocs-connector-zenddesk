@@ -28,6 +28,9 @@ return [
     | Credentials are sent ONLY to the account's own subdomain, never to a CDN.
     */
     'attachments' => [
+        // Zendesk reports a malware verdict per file. Only "malware_not_found" is trusted by default; set true to also
+        // import files whose scan is "not_scanned", "failed_to_scan" or missing (a deliberate fail-open policy).
+        'allow_unscanned' => env('CONNECTOR_ZENDESK_ALLOW_UNSCANNED', false),
         'allowed_hosts' => [
             '*.zendesk.com',
             '*.zdusercontent.com',
@@ -55,6 +58,10 @@ return [
         'connection' => env('CONNECTOR_ZENDESK_CONNECTION'),
         'overlap_seconds' => 120,
         'export_min_age_seconds' => 90,
+        // Optional `support_type_scope` of the incremental ticket export: null (omit, Zendesk's default), 'agent',
+        // 'ai_agent' or 'all'. Set 'all' on accounts that also want tickets handled by AI agents. Not yet verified
+        // against a live account (see docs/zendesk-api.md).
+        'ticket_support_type_scope' => env('CONNECTOR_ZENDESK_TICKET_SCOPE'),
         'middleware' => [],
     ],
 

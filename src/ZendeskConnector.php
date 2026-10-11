@@ -191,7 +191,7 @@ final class ZendeskConnector extends BaseConnector implements DeclaresProvenance
         $manager = app(SyncManager::class);
         $installation = $manager->installation($parts['installation_id']);
         if (! in_array($parts['kind'], ['article', 'ticket'], true)) {
-            return $parts['kind'] === 'attachment' ? SourceAccess::inherited() : SourceAccessPolicy::agentsOnly();
+            return $parts['kind'] === 'attachment' ? SourceAccess::inherited() : SourceAccessPolicy::agentRecord();
         }
         $client = $manager->client($installation);
         try {
@@ -200,10 +200,9 @@ final class ZendeskConnector extends BaseConnector implements DeclaresProvenance
 
                 return is_array($article) ? SourceAccessPolicy::article($article) : SourceAccess::unknown();
             }
-            // Existence check only: a ticket the credentials can no longer read must not be reported as agent-readable.
             $ticket = $client->get('/tickets/'.$parts['remote_id'])['ticket'] ?? null;
 
-            return is_array($ticket) ? SourceAccessPolicy::agentsOnly() : SourceAccess::unknown();
+            return is_array($ticket) ? SourceAccessPolicy::agentRecord($ticket['group_id'] ?? null) : SourceAccess::unknown();
         } catch (ZendeskApiException $exception) {
             if (in_array($exception->status, [401, 403], true)) {
                 throw new ConnectorAuthException($exception->getMessage(), previous: $exception);

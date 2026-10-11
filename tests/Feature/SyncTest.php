@@ -180,7 +180,7 @@ final class SyncTest extends TestCase
     private function withAttachment(string $url, string $name = 'info.txt', string $type = 'text/plain'): array
     {
         return ['/tickets/1/comments' => ['comments' => [['id' => 100, 'author_id' => 10, 'public' => true, 'created_at' => '2026-10-01T10:00:00Z', 'plain_body' => 'See file',
-            'attachments' => [['id' => 55, 'file_name' => $name, 'content_type' => $type, 'size' => 11, 'content_url' => $url]]]], 'meta' => ['has_more' => false]]];
+            'attachments' => [['id' => 55, 'file_name' => $name, 'content_type' => $type, 'size' => 11, 'malware_scan_result' => 'malware_not_found', 'content_url' => $url]]]], 'meta' => ['has_more' => false]]];
     }
 
     public function test_attachment_download_sends_credentials_only_to_the_account_host(): void
@@ -512,6 +512,60 @@ final class SyncTest extends TestCase
 
             $this->assertContains(['tenant-a', $installation->id.':attachment:55'], $this->ingestion->deleted, $flag);
             $this->assertSame(0, SourceState::where('kind', 'attachment')->count(), $flag);
+            $installation->delete();
+        }
+    }
+
+    public function test_attachments_without_a_clean_malware_verdict_are_not_downloaded_unless_opted_in(): void
+    {
+        $url = 'https://example.zendesk.com/files/info.txt';
+        $download = fn ($request) => str_contains($request->url(), '/files/info.txt') ? Http::response('hello world', 200, ['Content-Type' => 'text/plain']) : null;
+        foreach (['not_scanned', 'failed_to_scan', null] as $verdict) {
+            $routes = $this->withAttachment($url);
+            if ($verdict === null) {
+                unset($routes['/tickets/1/comments']['comments'][0]['attachments'][0]['malware_scan_result']);
+            } else {
+                $routes['/tickets/1/comments']['comments'][0]['attachments'][0]['malware_scan_result'] = $verdict;
+            }
+            config()->set('connector-zendesk.attachments.allow_unscanned', false);
+            $this->ingestion->documents = [];
+            SourceState::query()->delete();
+            $this->zendesk($routes, $download);
+            $installation = $this->authorized();
+            $this->finish(app(SyncManager::class)->start($installation));
+            Http::assertNotSent(fn ($r) => str_contains($r->url(), '/files/info.txt'));
+            $this->assertSame(0, SourceState::where('kind', 'attachment')->count(), (string) $verdict);
+
+            config()->set('connector-zendesk.attachments.allow_unscanned', true);
+            $this->zendesk($routes, $download);
+            $this->finish(app(SyncManager::class)->start($installation));
+            $this->assertSame(1, SourceState::where('kind', 'attachment')->count(), (string) $verdict);
+
+            // Even when opted in, a file Zendesk flags as malware is never fetched.
+            $routes['/tickets/1/comments']['comments'][0]['attachments'][0]['malware_scan_result'] = 'malware_found';
+            $this->zendesk($routes, $download);
+            $this->finish(app(SyncManager::class)->start($installation));
+            $this->assertSame(0, SourceState::where('kind', 'attachment')->count(), (string) $verdict);
+            $installation->delete();
+        }
+    }
+
+    public function test_the_ticket_export_scope_is_sent_only_when_configured_and_valid(): void
+    {
+        foreach ([[null, null], ['all', 'all'], ['ai_agent', 'ai_agent'], ['bogus', null]] as [$configured, $expected]) {
+            config()->set('connector-zendesk.sync.ticket_support_type_scope', $configured);
+            $this->zendesk();
+            SourceState::query()->delete();
+            $installation = $this->authorized();
+            $this->finish(app(SyncManager::class)->start($installation));
+            Http::assertSent(function ($r) use ($expected) {
+                if (! str_contains($r->url(), '/incremental/tickets/cursor')) {
+                    return false;
+                }
+                parse_str((string) parse_url($r->url(), PHP_URL_QUERY), $query);
+
+                return ($query['support_type_scope'] ?? null) === $expected;
+            });
             $installation->delete();
         }
     }

@@ -25,7 +25,7 @@ The installation's `last_sync_at` advances **only when a scan completes**, to th
 
 ### `tickets`
 
-Reads `GET /incremental/tickets/cursor` — first with `start_time`, then with the returned `after_cursor` — until `end_of_stream`. Each exported ticket becomes a pending item; items are then processed one per step:
+Reads `GET /incremental/tickets/cursor` — first with `start_time`, then with the returned `after_cursor` — until `end_of_stream` (plus `support_type_scope` when `sync.ticket_support_type_scope` is set to `agent`, `ai_agent` or `all`). Each exported ticket becomes a pending item; items are then processed one per step:
 
 - status `deleted` → remove the ticket document and its attachments;
 - otherwise `GET /tickets/{id}?include=users,organizations` and every page of `GET /tickets/{id}/comments?include=users` (cursor pagination, 100 per page), then render and deliver. A `404` between export and detail is ignored: if the ticket was really deleted the stream reports it.

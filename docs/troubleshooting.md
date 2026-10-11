@@ -29,7 +29,7 @@ or directly: `SELECT id, mode, status, error, checkpoint FROM zendesk_sync_runs 
 | *organization export cannot advance at the timestamp boundary* | More than a page of organizations share one `end_time` | Report it; the scan stays resumable |
 | *attachment host is not allowed* | The file is served from a host not in `attachments.allowed_hosts` | Add the exact CDN host after confirming it is Zendesk's |
 | *attachment MIME does not match its file type* | A renamed or corrupt file | Expected protection; the scan stops so you notice. Remove the file in Zendesk or disable attachments |
-| `attachments_skipped` is high | Unsupported type, over-size, malware flag, per-ticket limit | Review `attachments.*`; images need `kb.ocr.enabled` |
+| `attachments_skipped` is high | Unsupported type, over-size, a malware verdict other than `malware_not_found` (including `not_scanned` / `failed_to_scan`, which are retried when the ticket is next imported), per-ticket limit | Review `attachments.*` (`allow_unscanned` is the fail-open opt-in); images need `kb.ocr.enabled` |
 | Old tickets are missing | Outside `date_window_days` | Widen the window, or **Fetch all** |
 | A ticket I deleted is still searchable | The deletion appears in the next export after the deletion is committed | Run **Sync now** |
 | Internal notes still searchable | Re-import happens on the next scan | **Sync now**; check `internal_notes_included` in the metadata |

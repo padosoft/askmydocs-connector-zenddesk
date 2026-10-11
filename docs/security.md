@@ -33,7 +33,7 @@ Only `GET` is ever issued.
 Attachments are customer-supplied files, the highest-risk input the package touches.
 
 - Only `pdf`, `docx`, `txt`, `md`, `markdown` (and image types when `kb.ocr.enabled`) are downloaded; everything else is skipped and counted in `attachments_skipped`.
-- Skipped without downloading: `malware_scan_result = malware_found`, `deleted = true`, over-size, over the per-ticket limit, inline images. A previously imported attachment that Zendesk later flags as deleted or malware is **removed from the index** on the next scan; being merely too large or over the limit is not removal evidence.
+- Skipped without downloading: any `malware_scan_result` other than `malware_not_found` (so `malware_found`, `failed_to_scan`, `not_scanned` and an absent field; scans can lag, and unverified customer-controlled bytes must not reach the host's PDF/DOCX/OCR pipeline — `attachments.allow_unscanned` is the explicit fail-open opt-in, and `malware_found` is never fetched), `deleted = true`, over-size, over the per-ticket limit, inline images. A previously imported attachment that Zendesk later flags as deleted or malware is **removed from the index** on the next scan; being merely too large or over the limit is not removal evidence.
 - After download the **real bytes** are checked with `finfo`: the detected MIME must match the extension, and the declared `content_type` must agree. A `.docx` must be a ZIP with `[Content_Types].xml` and `word/document.xml`. A mismatch aborts the scan with a clear message instead of ingesting a disguised file.
 - The file name is reduced to its basename with control characters removed; it is never used in a path (the stored path uses the numeric attachment id).
 - Signed or tokenised URLs are never persisted in metadata, documents, checkpoints or tool results.
@@ -56,7 +56,8 @@ Attachments are customer-supplied files, the highest-risk input the package touc
 
 | Object | Reported |
 |---|---|
-| Ticket, customer, organization | group `zendesk:agents` |
+| Ticket | *unknown*, with the ticket's support group as a partial hint `zendesk:group:{id}` — agent access can be limited by role to assigned tickets, groups, brands or organizations, which cannot be represented, so no blanket "all agents" grant is reported |
+| Customer, organization | *unknown* (same reason) |
 | Attachment | inherits from its ticket |
 | Article, no user segment | `anyone` |
 | Article with `user_segment_id` and/or a non-empty `user_segment_ids` | one group `zendesk:user_segment:{id}` per segment (the plural list wins even when the singular field is null) |

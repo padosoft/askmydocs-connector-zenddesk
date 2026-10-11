@@ -20,9 +20,10 @@ All notable changes to `padosoft/askmydocs-connector-zendesk` are documented her
 - Installation switches: internal notes, customers, organizations, Help Center (with optional locale), attachment limits and the provenance tier; a change to content settings re-imports known tickets.
 - Eleven read-only live tools per installation (`list_tickets`, `search_tickets`, `search_users`, `get_user`, `search_agents`, `search_organizations`, `get_organization`, `get_ticket`, `list_comments`, `search_articles`, `get_article`) with project scoping, strict argument validation, size caps, coverage metadata and structured errors.
 - Agent usage profile (`resources/agent-usage.json`, schema version 1) published through `extra.askmydocs.agent_usage`.
-- Source ACL reporting (`zendesk:agents`, `anyone`, `zendesk:user_segment:{id}`) stamped on every document and available through `readAcl()`.
+- Source ACL reporting stamped on every document and available through `readAcl()`: tickets, customers and organizations are reported as *unknown* (agent access can be restricted by role, which cannot be represented) with the ticket's support group as a partial `zendesk:group:{id}` hint; articles as `anyone` or `zendesk:user_segment:{id}`; attachments inherit.
+- Attachments are downloaded only with an explicit `malware_not_found` verdict (`attachments.allow_unscanned` opts in to unscanned files; `malware_found` is never fetched). An opt-in `sync.ticket_support_type_scope` selects the ticket export scope (e.g. `all` to include AI-agent tickets).
 - SSRF-hardened HTTP layer: account-subdomain validation, attachment host allow-list, per-hop redirect validation and DNS pinning to public addresses; credentials sent only to the account host.
-- Testbench suite (92 tests), PHPStan level 6, Laravel Pint, GitHub Actions matrix (PHP 8.3/8.4 × Laravel 12/13).
+- Testbench suite (95 tests), PHPStan level 6, Laravel Pint, GitHub Actions matrix (PHP 8.3/8.4 × Laravel 12/13).
 - Documentation: README and `docs/` (architecture, credential setup, sync semantics, live tools, data model, security, API notes, troubleshooting, development).
 
 ### Known limitations

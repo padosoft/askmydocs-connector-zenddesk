@@ -47,6 +47,7 @@ See [live-tools.md](live-tools.md). In addition to the above: `/users/{id}/ticke
 
 ## Behaviours the design relies on
 
+- **Ticket export scope.** Codex review cited a `support_type_scope` parameter (`agent` by default, `all` to include AI-agent tickets) on the cursor ticket export. It could not be confirmed in the reference pages available while building this package, so it is **opt-in** (`sync.ticket_support_type_scope` / `CONNECTOR_ZENDESK_TICKET_SCOPE`) and unset by default rather than sent blindly to every account. Verify it on a sandbox before enabling.
 - **Export freshness.** A `start_time` too close to now is rejected by Zendesk, hence `sync.export_min_age_seconds`.
 - **Archived tickets.** Tickets are archived after a retention period and are not enumerable from list or search endpoints (only by id); a ticket `404` is therefore never treated as deletion.
 - **Search lag.** New or changed records can take minutes to appear in search results; the live tools declare `search_index_may_lag_by_minutes`.

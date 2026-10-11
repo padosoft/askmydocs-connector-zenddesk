@@ -348,6 +348,10 @@ final class SyncManager
             return $this->transition($installation, $run, $cp, 'tickets');
         }
         $query = ($cp['cursor'] ?? null) !== null ? ['cursor' => $cp['cursor']] : ['start_time' => (int) $cp['since']];
+        $scope = config('connector-zendesk.sync.ticket_support_type_scope');
+        if (in_array($scope, ['agent', 'ai_agent', 'all'], true)) {
+            $query['support_type_scope'] = $scope;
+        }
         $data = $client->get('/incremental/tickets/cursor', $query);
         $pending = [];
         foreach ((array) ($data['tickets'] ?? []) as $row) {
